@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#1E5BD6" />
+  <title>EXPRESSION — Media Team Hub</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M25 22 L75 78 M75 22 L25 78" stroke="#fff" stroke-width="13" stroke-linecap="square" fill="none"/>
+    </svg>
+    <div class="app-title">
+      <h1>EXPRESSION</h1>
+      <p>Expectation Church · Media Teams</p>
+    </div>
+    <div id="sync-badge" class="sync-badge" title="Sync status"></div>
+  </header>
+
+  <div id="banner"></div>
+
+  <main id="view" class="view"></main>
+
+  <nav class="tabbar">
+    <button class="tab" data-action="tab" data-tab="week">
+      <span class="tab-icon">&#128197;</span><span>Week</span>
+    </button>
+    <button class="tab" data-action="tab" data-tab="reels">
+      <span class="tab-icon">&#127909;</span><span>Reels</span>
+    </button>
+    <button class="tab" data-action="tab" data-tab="teams">
+      <span class="tab-icon">&#128101;</span><span>Teams</span>
+    </button>
+  </nav>
+
+  <div id="modal-root"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="config.js"></script>
+  <script src="store.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
