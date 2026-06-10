@@ -46,7 +46,7 @@ body {
   box-shadow: 0 4px 18px rgba(18, 64, 168, 0.35);
 }
 
-.logo { width: 42px; height: 42px; flex: none; }
+.logo { width: 46px; height: auto; flex: none; }
 
 .app-title { flex: 1; min-width: 0; }
 

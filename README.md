@@ -89,7 +89,8 @@ config.js             Supabase keys go here (optional)
 sw.js                 offline support (service worker)
 manifest.webmanifest  install-as-app metadata
 supabase/schema.sql   one-time database setup + starter data
-tools/make_icons.py   regenerates the app icons
+assets/logo.jpg       original Expectation Church logo
+tools/make-icons.mjs  regenerates icons/header mark from the logo
 ```
 
 No build step and no dependencies to install — it's plain HTML/CSS/JS, so

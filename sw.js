@@ -1,5 +1,5 @@
 /* Offline support: cache the app shell, refresh it in the background. */
-const CACHE = "expression-v1";
+const CACHE = "expression-v2";
 const ASSETS = [
   "./",
   "./index.html",
@@ -8,7 +8,7 @@ const ASSETS = [
   "./store.js",
   "./config.js",
   "./manifest.webmanifest",
-  "./icons/icon.svg",
+  "./icons/logo-mark.png",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
 ];
