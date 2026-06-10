@@ -14,8 +14,16 @@
 </head>
 <body>
   <header class="app-header">
-    <svg class="logo" viewBox="0 0 100 100" aria-hidden="true">
-      <path d="M25 22 L75 78 M75 22 L25 78" stroke="#fff" stroke-width="13" stroke-linecap="square" fill="none"/>
+    <svg class="logo" viewBox="0 0 1000 1000" aria-hidden="true">
+      <defs>
+        <linearGradient id="logo-bg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#2C69E5"/>
+          <stop offset="1" stop-color="#2160DE"/>
+        </linearGradient>
+      </defs>
+      <line x1="800" y1="200" x2="150" y2="850" stroke="#fff" stroke-width="120" stroke-linecap="round"/>
+      <path d="M242 320 L320 242 L500 422 L624 298 L702 376 L578 500 L758 680 L680 758 L500 578 L376 702 L298 624 L422 500 Z"
+            fill="url(#logo-bg)" stroke="#fff" stroke-width="42" stroke-linejoin="round"/>
     </svg>
     <div class="app-title">
       <h1>EXPRESSION</h1>

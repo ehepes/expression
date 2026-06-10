@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Generate the PWA icons (blue gradient rounded square with a white X).
+"""Generate the PWA icons: blue gradient rounded square with the
+Expectation X mark (hollow outlined X with a solid diagonal slash).
 
 Pure standard library so it runs anywhere: python3 tools/make_icons.py
 """
@@ -11,6 +12,16 @@ TOP = (46, 107, 230)     # #2E6BE6
 BOTTOM = (18, 64, 168)   # #1240A8
 SS = 3                   # supersampling factor for smooth edges
 
+# Mark geometry in a 1000x1000 design space (matches icons/icon.svg).
+POLY = [
+    (242, 320), (320, 242), (500, 422), (624, 298), (702, 376), (578, 500),
+    (758, 680), (680, 758), (500, 578), (376, 702), (298, 624), (422, 500),
+]
+LINE = ((800, 200), (150, 850))
+OUTLINE_W = 42
+LINE_W = 120
+MARK_SCALE = 1.1
+
 
 def inside_rounded_rect(x, y, size, r):
     if x < 0 or y < 0 or x > size or y > size:
@@ -20,11 +31,45 @@ def inside_rounded_rect(x, y, size, r):
     return (x - cx) ** 2 + (y - cy) ** 2 <= r * r
 
 
+def seg_dist_sq(px, py, ax, ay, bx, by):
+    vx, vy = bx - ax, by - ay
+    wx, wy = px - ax, py - ay
+    t = (wx * vx + wy * vy) / (vx * vx + vy * vy)
+    t = 0.0 if t < 0 else (1.0 if t > 1 else t)
+    dx, dy = px - (ax + t * vx), py - (ay + t * vy)
+    return dx * dx + dy * dy
+
+
+def poly_boundary_dist_sq(x, y):
+    best = 1e18
+    n = len(POLY)
+    for i in range(n):
+        ax, ay = POLY[i]
+        bx, by = POLY[(i + 1) % n]
+        d = seg_dist_sq(x, y, ax, ay, bx, by)
+        if d < best:
+            best = d
+    return best
+
+
+def point_in_poly(x, y):
+    inside = False
+    n = len(POLY)
+    j = n - 1
+    for i in range(n):
+        xi, yi = POLY[i]
+        xj, yj = POLY[j]
+        if (yi > y) != (yj > y) and x < (xj - xi) * (y - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
 def render(size):
     r = size * 0.22
-    cx = cy = size / 2.0
-    bar_half = size * 0.055
-    arm = size * 0.30
+    half_outline_sq = (OUTLINE_W / 2.0) ** 2
+    half_line_sq = (LINE_W / 2.0) ** 2
+    to_design = (1000.0 / size) / MARK_SCALE
     rows = []
     for y in range(size):
         row = bytearray()
@@ -36,13 +81,14 @@ def render(size):
                     fy = y + (sy + 0.5) / SS
                     if not inside_rounded_rect(fx, fy, size, r):
                         continue
-                    dx, dy = fx - cx, fy - cy
-                    u = (dx + dy) * 0.70710678
-                    v = (dx - dy) * 0.70710678
-                    on_x = (abs(u) < bar_half and abs(v) < arm) or (
-                        abs(v) < bar_half and abs(u) < arm
-                    )
-                    if on_x:
+                    # design-space coordinates of this sample
+                    ux = 500.0 + (fx - size / 2.0) * to_design
+                    uy = 500.0 + (fy - size / 2.0) * to_design
+                    white = poly_boundary_dist_sq(ux, uy) <= half_outline_sq
+                    if not white and not point_in_poly(ux, uy):
+                        (a, b) = LINE
+                        white = seg_dist_sq(ux, uy, a[0], a[1], b[0], b[1]) <= half_line_sq
+                    if white:
                         cr, cg, cb = 255, 255, 255
                     else:
                         t = fy / size

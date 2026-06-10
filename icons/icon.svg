@@ -1,10 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 1000">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1000" gradientUnits="userSpaceOnUse">
       <stop offset="0" stop-color="#2E6BE6"/>
       <stop offset="1" stop-color="#1240A8"/>
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#g)"/>
-  <path d="M158 138 L354 374 M354 138 L158 374" stroke="#fff" stroke-width="54" stroke-linecap="square" fill="none"/>
+  <rect width="1000" height="1000" rx="220" fill="url(#g)"/>
+  <!-- Expectation X mark: solid diagonal slash behind a hollow outlined X -->
+  <g transform="translate(500 500) scale(1.1) translate(-500 -500)">
+    <line x1="800" y1="200" x2="150" y2="850" stroke="#fff" stroke-width="120" stroke-linecap="round"/>
+    <path d="M242 320 L320 242 L500 422 L624 298 L702 376 L578 500 L758 680 L680 758 L500 578 L376 702 L298 624 L422 500 Z"
+          fill="url(#g)" stroke="#fff" stroke-width="42" stroke-linejoin="round"/>
+  </g>
 </svg>
