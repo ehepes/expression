@@ -15,13 +15,18 @@
  *  completions:  one row per (item_id, date) marked done.
  *  projects:     reels/projects with assignee, pipeline status and a
  *                "required by" date, per account.
+ *  members:      team member names (populate assignment dropdowns).
+ *  week_assignments: who is on posting duty for a week, per account.
  */
 window.Store = (() => {
   const LS_KEY = "expression-data-v2";
 
+  const EMPTY = { items: [], completions: [], projects: [], members: [], week_assignments: [] };
+
   let mode = "local"; // "local" | "remote" | "local-error"
   let sb = null;
-  let state = { items: [], completions: [], projects: [] };
+  let upgradeNeeded = false; // remote DB missing the members/week_assignments tables
+  let state = Object.assign({}, EMPTY);
   const listeners = [];
 
   const uid = () =>
@@ -46,7 +51,8 @@ window.Store = (() => {
     try {
       const raw = localStorage.getItem(LS_KEY);
       if (raw) {
-        state = JSON.parse(raw);
+        // Older saves predate some collections; fill in what's missing.
+        state = Object.assign({}, EMPTY, JSON.parse(raw));
         return;
       }
     } catch (e) {
@@ -70,6 +76,8 @@ window.Store = (() => {
       status: status || "idea", due_date: due || null,
     });
     return {
+      members: [],
+      week_assignments: [],
       items: [
         // Monday
         w(0, "Story Recap", "Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00"),
@@ -116,14 +124,25 @@ window.Store = (() => {
 
   // ----- remote (Supabase) -----
   async function fetchAll() {
-    const [items, completions, projects] = await Promise.all([
+    const [items, completions, projects, members, weekAssignments] = await Promise.all([
       sb.from("items").select("*").order("created_at"),
       sb.from("completions").select("*"),
       sb.from("projects").select("*").order("created_at"),
+      sb.from("members").select("*").order("name"),
+      sb.from("week_assignments").select("*"),
     ]);
     const err = items.error || completions.error || projects.error;
     if (err) throw err;
-    state = { items: items.data, completions: completions.data, projects: projects.data };
+    // members/week_assignments arrived in a later upgrade; if those tables
+    // don't exist yet the rest of the app must keep working.
+    upgradeNeeded = !!(members.error || weekAssignments.error);
+    state = {
+      items: items.data,
+      completions: completions.data,
+      projects: projects.data,
+      members: members.error ? [] : members.data,
+      week_assignments: weekAssignments.error ? [] : weekAssignments.data,
+    };
   }
 
   async function init() {
@@ -301,11 +320,52 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- members -----
+  async function addMember(name) {
+    name = (name || "").trim();
+    if (!name) return;
+    if (state.members.some((m) => m.name.toLowerCase() === name.toLowerCase())) return;
+    if (sb) {
+      // Not worth an error popup — the assignment itself still saves.
+      const { error } = await sb
+        .from("members")
+        .upsert({ name }, { onConflict: "name", ignoreDuplicates: true });
+      if (error) return console.error("Could not save member name:", error);
+      return afterRemoteWrite();
+    }
+    state.members.push({ id: uid(), name });
+    saveLocal();
+    emit();
+  }
+
+  // ----- week assignments (posting duty for a whole week) -----
+  async function setWeekAssignment(acct, weekStartStr, assignee) {
+    assignee = (assignee || "").trim();
+    if (sb) {
+      const { error } = assignee
+        ? await sb
+            .from("week_assignments")
+            .upsert({ account: acct, week_start: weekStartStr, assignee }, { onConflict: "account,week_start" })
+        : await sb.from("week_assignments").delete().eq("account", acct).eq("week_start", weekStartStr);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.week_assignments = state.week_assignments.filter(
+      (w) => !(w.account === acct && w.week_start === weekStartStr)
+    );
+    if (assignee) {
+      state.week_assignments.push({ id: uid(), account: acct, week_start: weekStartStr, assignee });
+    }
+    saveLocal();
+    emit();
+  }
+
   return {
     init,
     onChange,
     get: () => state,
     getMode: () => mode,
+    needsUpgrade: () => upgradeNeeded,
     isDone,
     addItem,
     updateItem,
@@ -314,5 +374,7 @@ window.Store = (() => {
     addProject,
     updateProject,
     deleteProject,
+    addMember,
+    setWeekAssignment,
   };
 })();

@@ -219,6 +219,37 @@ body {
   transition: width 0.25s ease;
 }
 
+/* ---------- Week posting assignment ---------- */
+.week-assign {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  background: var(--card);
+  border: 1.5px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 12px 16px;
+  margin: -6px 0 16px;
+  font-family: var(--font);
+  font-size: 13.5px;
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+}
+
+.week-assign b { color: var(--text); }
+
+.week-assign.unset b { color: var(--muted); font-weight: 600; font-style: italic; }
+
+.week-assign .assign-link {
+  margin-left: auto;
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.assignee-new { margin-top: 8px; }
+
 /* ---------- Day cards ---------- */
 .day-card {
   background: var(--card);

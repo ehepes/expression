@@ -20,6 +20,11 @@ It covers the three branches of the team:
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices
   where the person has set their name (Settings ⚙) — needs team sync on.
+- **Team names & week duty** — names set in Settings ⚙ are saved to the
+  shared database, so assigning is a dropdown of real team members. One
+  person can be assigned a whole week of posting from the Week tab
+  ("Posting this week"); they're notified when assigned, plus a reminder
+  the first time they open the app each morning of that week.
 - **Teams view** — each branch's weekly progress and task list at a glance.
 - **Accounts** — separate content plans for Main Church, YA, YTH and HER,
   switchable from the dropdown under the header.
@@ -60,6 +65,10 @@ calendar with live updates:
 
 > The anon key is safe to put in the app, but the app link then acts like a
 > shared team notebook — share it with the team only, don't post it publicly.
+
+**Already set up sync before team names / week assignments existed?** Run
+[`supabase/upgrade-team.sql`](supabase/upgrade-team.sql) once in the SQL
+Editor the same way — the app shows a banner until this is done.
 
 ## 3. Install it like an app on your phone
 

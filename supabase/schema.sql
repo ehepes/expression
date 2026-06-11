@@ -43,20 +43,44 @@ create table if not exists projects (
   created_at timestamptz not null default now()
 );
 
+-- Everyone who has set their name in the app, so assignment dropdowns
+-- can offer existing names instead of free typing.
+create table if not exists members (
+  id uuid primary key default gen_random_uuid(),
+  name text not null unique,
+  created_at timestamptz not null default now()
+);
+
+-- Who is on posting duty for a given week (Monday date), per account.
+create table if not exists week_assignments (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  week_start date not null,
+  assignee text not null,
+  created_at timestamptz not null default now(),
+  unique (account, week_start)
+);
+
 -- The app is shared via a private link with a small trusted team, so the
 -- anon key gets full read/write. Don't post the app link publicly.
 alter table items enable row level security;
 alter table completions enable row level security;
 alter table projects enable row level security;
+alter table members enable row level security;
+alter table week_assignments enable row level security;
 
 create policy "team access" on items for all using (true) with check (true);
 create policy "team access" on completions for all using (true) with check (true);
 create policy "team access" on projects for all using (true) with check (true);
+create policy "team access" on members for all using (true) with check (true);
+create policy "team access" on week_assignments for all using (true) with check (true);
 
 -- Live updates: when one person changes something, everyone else sees it.
 alter publication supabase_realtime add table items;
 alter publication supabase_realtime add table completions;
 alter publication supabase_realtime add table projects;
+alter publication supabase_realtime add table members;
+alter publication supabase_realtime add table week_assignments;
 
 -- ---------------------------------------------------------------
 -- Main Church standard weekly Instagram schedule (from the team's

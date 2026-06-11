@@ -180,6 +180,9 @@ function renderBanner() {
   } else if (mode === "local-error") {
     el.innerHTML =
       "<b>Couldn’t reach the team database.</b> Working from this device for now — check the keys in config.js or your connection, then reload.";
+  } else if (Store.needsUpgrade()) {
+    el.innerHTML =
+      "<b>Database upgrade needed:</b> to save team names and week assignments, run <b>supabase/upgrade-team.sql</b> in the Supabase SQL Editor (it’s in the project files), then reload.";
   } else {
     el.innerHTML = "";
   }
@@ -270,7 +273,55 @@ function renderWeek() {
       <div class="label"><span>This week · ${esc(ACCOUNTS[account])}</span><span>${done} of ${total} done</span></div>
       <div class="bar"><span style="width:${pct}%"></span></div>
     </div>
+    ${weekAssignHtml()}
     ${days}`;
+}
+
+function weekAssignee() {
+  const ws = ymd(weekStart);
+  const wa = Store.get().week_assignments.find(
+    (w) => (w.account || "main") === account && w.week_start === ws
+  );
+  return wa ? wa.assignee : "";
+}
+
+function weekAssignHtml() {
+  const who = weekAssignee();
+  return `
+    <button type="button" class="week-assign ${who ? "" : "unset"}" data-action="assign-week">
+      <span>&#128100; Posting this week:</span>
+      <b>${who ? esc(who) : "no one yet"}</b>
+      <span class="assign-link">${who ? "Change" : "Assign"}</span>
+    </button>`;
+}
+
+function openWeekAssignModal() {
+  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
+  const current = weekAssignee();
+  document.getElementById("modal-root").innerHTML = `
+    <div class="modal-overlay" data-action="close-modal">
+      <form class="modal" id="week-assign-form">
+        <h2>Assign this week's posting</h2>
+        <p class="hint" style="margin-top:-8px">Week of ${range} · ${esc(ACCOUNTS[account])}. One person covers every day of this week.</p>
+        <div class="field">
+          <label>Assigned to</label>
+          ${assigneeFieldHtml(current)}
+          <p class="hint">They'll be notified when assigned, plus a reminder each morning of the week when they open the app.</p>
+        </div>
+        <div class="modal-actions">
+          ${current ? '<button type="button" class="danger-btn" data-action="unassign-week">Remove</button>' : ""}
+          <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
+          <button type="submit" class="primary-btn">Save</button>
+        </div>
+      </form>
+    </div>`;
+  const form = document.getElementById("week-assign-form");
+  wireAssigneeField(form);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    Store.setWeekAssignment(account, ymd(weekStart), readAssignee(form));
+    closeModal();
+  });
 }
 
 function renderProjects() {
@@ -361,6 +412,41 @@ function closeModal() {
   document.getElementById("modal-root").innerHTML = "";
 }
 
+// Assignee picker: dropdown of saved team names + a "new name" escape hatch.
+function assigneeFieldHtml(current) {
+  current = (current || "").trim();
+  const names = Store.get().members.map((m) => m.name);
+  if (current && !names.some((n) => n.toLowerCase() === current.toLowerCase())) names.push(current);
+  names.sort((a, b) => a.localeCompare(b));
+  const opts = ['<option value="">Unassigned</option>']
+    .concat(
+      names.map(
+        (n) => `<option value="${esc(n)}" ${n.toLowerCase() === current.toLowerCase() ? "selected" : ""}>${esc(n)}</option>`
+      )
+    )
+    .concat(['<option value="__new__">&#65291; New name&hellip;</option>'])
+    .join("");
+  return `
+    <select name="assignee_select">${opts}</select>
+    <input type="text" name="assignee_new" maxlength="80" placeholder="Type the new name" class="assignee-new" style="display:none" />`;
+}
+
+function wireAssigneeField(form) {
+  form.assignee_select.addEventListener("change", () => {
+    const isNew = form.assignee_select.value === "__new__";
+    form.assignee_new.style.display = isNew ? "block" : "none";
+    if (isNew) form.assignee_new.focus();
+  });
+}
+
+// Read the chosen name and remember it in the shared team list.
+function readAssignee(form) {
+  const v = form.assignee_select.value;
+  const name = (v === "__new__" ? form.assignee_new.value : v).trim();
+  if (name) Store.addMember(name);
+  return name;
+}
+
 function openItemModal(opts) {
   const editing = opts.id ? Store.get().items.find((i) => i.id === opts.id) : null;
   const it = editing || {
@@ -399,7 +485,7 @@ function openItemModal(opts) {
         </div>
         <div class="field">
           <label>Assigned to</label>
-          <input type="text" name="assignee" maxlength="80" value="${esc(it.assignee)}" placeholder="Name (optional)" />
+          ${assigneeFieldHtml(it.assignee)}
         </div>
         <div class="field">
           <label>Notes</label>
@@ -442,6 +528,7 @@ function openItemModal(opts) {
     </div>`;
 
   const form = document.getElementById("item-form");
+  wireAssigneeField(form);
   const syncScheduleFields = () => {
     const s = form.schedule.value;
     form.date.style.display = s === "once" ? "block" : "none";
@@ -460,7 +547,7 @@ function openItemModal(opts) {
       account,
       title: form.title.value.trim(),
       branch: form.branch.value,
-      assignee: form.assignee.value.trim(),
+      assignee: readAssignee(form),
       notes: form.notes.value.trim(),
       recurring: s !== "once",
       recur: s === "monthly" ? "monthly" : "weekly",
@@ -508,7 +595,8 @@ function openProjectModal(id) {
         </div>
         <div class="field">
           <label>Assigned to</label>
-          <input type="text" name="assignee" maxlength="80" value="${esc(r.assignee)}" placeholder="Name (optional)" />
+          ${assigneeFieldHtml(r.assignee)}
+          <p class="hint">They get a notification when you save (if they've set their name in Settings).</p>
         </div>
         <div class="field">
           <label>Status</label>
@@ -527,13 +615,14 @@ function openProjectModal(id) {
     </div>`;
 
   const form = document.getElementById("project-form");
+  wireAssigneeField(form);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const fields = {
       account,
       title: form.title.value.trim(),
       notes: form.notes.value.trim(),
-      assignee: form.assignee.value.trim(),
+      assignee: readAssignee(form),
       status: form.status.value,
       due_date: form.due_date.value || null,
     };
@@ -571,41 +660,104 @@ function openSettingsModal() {
   const form = document.getElementById("settings-form");
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    setPrefs({ myName: form.myName.value.trim() });
+    const myName = form.myName.value.trim();
+    setPrefs({ myName });
+    if (myName) Store.addMember(myName); // joins the shared assignment dropdown
     closeModal();
   });
 }
 
 // ----- assignment notifications (works while the app is open, team sync on) -----
 let prevAssignees = null;
+let prevWeekAssignees = null;
 
-function checkAssignments() {
+function canNotify() {
   const prefs = getPrefs();
-  const current = {};
-  Store.get().projects.forEach((r) => {
-    current[r.id] = r.assignee || "";
-  });
-  if (
-    prevAssignees &&
+  return (
     Store.getMode() === "remote" &&
     prefs.myName &&
     "Notification" in window &&
     Notification.permission === "granted"
-  ) {
-    const me = prefs.myName.trim().toLowerCase();
+  );
+}
+
+function notify(title, body) {
+  try {
+    new Notification(title, { body, icon: "icons/icon-192.png" });
+  } catch (e) {
+    console.error("Notification failed:", e);
+  }
+}
+
+function checkAssignments() {
+  const prefs = getPrefs();
+  const me = (prefs.myName || "").trim().toLowerCase();
+  const current = {};
+  Store.get().projects.forEach((r) => {
+    current[r.id] = r.assignee || "";
+  });
+  const currentWeeks = {};
+  Store.get().week_assignments.forEach((w) => {
+    currentWeeks[(w.account || "main") + "|" + w.week_start] = w.assignee || "";
+  });
+
+  if (prevAssignees && canNotify()) {
     Store.get().projects.forEach((r) => {
       const now = (r.assignee || "").trim().toLowerCase();
       const before = (prevAssignees[r.id] || "").trim().toLowerCase();
       if (now === me && before !== me) {
-        new Notification("New project assigned to you", {
-          body: r.title,
-          icon: "icons/icon-192.png",
-        });
+        notify("New project assigned to you", r.title);
+      }
+    });
+    Object.entries(currentWeeks).forEach(([key, who]) => {
+      const before = ((prevWeekAssignees || {})[key] || "").trim().toLowerCase();
+      if (who.trim().toLowerCase() === me && before !== me) {
+        const [acct, ws] = key.split("|");
+        const [y, m, d] = ws.split("-").map(Number);
+        notify(
+          "You're on posting duty",
+          `Week of ${fmtShort(new Date(y, m - 1, d))} · ${ACCOUNTS[acct] || acct}`
+        );
       }
     });
   }
   prevAssignees = current;
+  prevWeekAssignees = currentWeeks;
 }
+
+// Once per day, on the first open of the app: if I'm on posting duty this
+// week, remind me what's due today.
+function morningReminder() {
+  if (!canNotify()) return;
+  const prefs = getPrefs();
+  const me = prefs.myName.trim().toLowerCase();
+  const today = new Date();
+  const todayStr = ymd(today);
+  if (prefs.lastReminder === todayStr) return;
+  const ws = ymd(startOfWeek(today));
+  const mine = Store.get().week_assignments.filter(
+    (w) => w.week_start === ws && (w.assignee || "").trim().toLowerCase() === me
+  );
+  if (!mine.length) return;
+  let due = 0;
+  mine.forEach((w) => {
+    Store.get().items.forEach((it) => {
+      if ((it.account || "main") !== (w.account || "main")) return;
+      if (showsOn(it, today, todayStr) && !Store.isDone(it.id, todayStr)) due++;
+    });
+  });
+  setPrefs({ lastReminder: todayStr });
+  notify(
+    "You're on posting today",
+    due
+      ? `${due} item${due === 1 ? "" : "s"} to post today (${mine.map((w) => ACCOUNTS[w.account || "main"]).join(", ")})`
+      : "Nothing left to post today — all done or nothing scheduled."
+  );
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") morningReminder();
+});
 
 // ----- events -----
 document.addEventListener("click", (e) => {
@@ -683,6 +835,13 @@ document.addEventListener("click", (e) => {
         closeModal();
       }
       break;
+    case "assign-week":
+      openWeekAssignModal();
+      break;
+    case "unassign-week":
+      Store.setWeekAssignment(account, ymd(weekStart), "");
+      closeModal();
+      break;
     case "settings":
       openSettingsModal();
       break;
@@ -724,6 +883,7 @@ function initAccountSelect() {
 initAccountSelect();
 Store.onChange(() => {
   checkAssignments();
+  morningReminder();
   render();
 });
 Store.init();
