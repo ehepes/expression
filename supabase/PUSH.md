@@ -23,16 +23,59 @@ only need the **private** key below, which stays secret inside Supabase.
 Supabase → **SQL Editor** → **New query** → paste all of
 [`push-setup.sql`](push-setup.sql) → **Run**.
 
-## Step 2 — Create the Edge Function
+## Step 2 — Deploy the Edge Function
 
-1. Supabase → **Edge Functions** (left sidebar) → **Create a function**.
-2. Name it exactly **`push`**.
-3. Delete the sample code and paste the entire contents of
-   [`functions/push/index.ts`](functions/push/index.ts).
-4. **Important:** turn **Verify JWT** *off* for this function (there's a
-   toggle in the function settings / a checkbox when deploying). The app
-   uses a publishable key, which isn't a JWT.
-5. **Deploy**.
+Supabase no longer has a browser editor for Edge Functions — you deploy from
+a terminal using the Supabase CLI. Follow these steps on your laptop:
+
+### 2a — Install the Supabase CLI (once)
+
+**Mac:**
+```
+brew install supabase/tap/supabase
+```
+
+**Windows (PowerShell):**
+```
+scoop bucket add supabase https://github.com/supabase/scoop-bucket.git
+scoop install supabase
+```
+
+**Or npm (works on both):**
+```
+npm install -g supabase
+```
+
+### 2b — Log in and link your project
+
+```
+supabase login
+```
+This opens a browser tab — click **Authorise**. Then link to your project:
+
+```
+supabase link --project-ref lboueyjikfjtycymigtw
+```
+*(the ref is the part of your project URL after `https://supabase.com/dashboard/project/`)*
+
+### 2c — Deploy
+
+In a terminal, navigate to your project folder (where you cloned the GitHub
+repo) and run:
+
+```
+supabase functions deploy push --no-verify-jwt
+```
+
+`--no-verify-jwt` is important — the app uses a publishable key rather than
+a signed JWT, so without this flag the function will reject every call.
+
+You should see `Deployed to https://lboueyjikfjtycymigtw.supabase.co/functions/v1/push`.
+
+> **Don't have the repo on your laptop?**
+> The quickest way: click the green **Code** button on your GitHub repo
+> page → **Download ZIP** → unzip it → open a terminal in that folder.
+> Then run the three commands above.
 
 ## Step 3 — Add the secret keys
 
