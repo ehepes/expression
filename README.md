@@ -70,6 +70,14 @@ calendar with live updates:
 [`supabase/upgrade-team.sql`](supabase/upgrade-team.sql) once in the SQL
 Editor the same way — the app shows a banner until this is done.
 
+## 2b. Turn on real push notifications (optional, ~15 minutes)
+
+By default, notifications appear while the app is open. To make them arrive
+**even when the app is fully closed** — assignment alerts and a morning
+reminder for whoever is on posting duty — follow
+[`supabase/PUSH.md`](supabase/PUSH.md). It runs on the same free Supabase
+project (Edge Function + a daily scheduled job).
+
 ## 3. Install it like an app on your phone
 
 - **iPhone (Safari):** open the link → tap the **Share** button → **Add to
@@ -96,16 +104,21 @@ The YA, YTH and HER accounts start blank, ready to populate in-app.
 ## Project layout
 
 ```
-index.html            app shell
-styles.css            styling (Expectation Church brand)
-app.js                UI logic
-store.js              data layer (Supabase or localStorage)
-config.js             Supabase keys go here (optional)
-sw.js                 offline support (service worker)
-manifest.webmanifest  install-as-app metadata
-supabase/schema.sql   one-time database setup + starter data
-assets/logo.jpg       original Expectation Church logo
-tools/make-icons.mjs  regenerates icons/header mark from the logo
+index.html               app shell
+styles.css               styling (Expectation Church brand)
+app.js                   UI logic
+store.js                 data layer (Supabase or localStorage)
+config.js                Supabase keys + push public key
+sw.js                    offline support + push handler (service worker)
+manifest.webmanifest     install-as-app metadata
+supabase/schema.sql      full database setup + starter data (fresh projects)
+supabase/upgrade-team.sql  add team names + week duty to an existing project
+supabase/push-setup.sql  push notifications: database table
+supabase/push-cron.sql   push notifications: daily morning-reminder schedule
+supabase/functions/push  push notifications: the Edge Function that sends them
+supabase/PUSH.md         step-by-step push setup guide
+assets/logo.jpg          original Expectation Church logo
+tools/make-icons.mjs     regenerates icons/header mark from the logo
 ```
 
 No build step and no dependencies to install — it's plain HTML/CSS/JS, so

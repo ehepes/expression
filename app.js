@@ -319,7 +319,12 @@ function openWeekAssignModal() {
   wireAssigneeField(form);
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    Store.setWeekAssignment(account, ymd(weekStart), readAssignee(form));
+    const prev = current;
+    const name = readAssignee(form);
+    Store.setWeekAssignment(account, ymd(weekStart), name);
+    if (name && name.toLowerCase() !== prev.toLowerCase()) {
+      pushAssignment(name, "You're on posting duty", `Week of ${range} · ${ACCOUNTS[account]}`);
+    }
     closeModal();
   });
 }
@@ -627,8 +632,12 @@ function openProjectModal(id) {
       due_date: form.due_date.value || null,
     };
     if (!fields.title) return;
+    const prevAssignee = editing ? (editing.assignee || "") : "";
     if (editing) Store.updateProject(editing.id, fields);
     else Store.addProject(fields);
+    if (fields.assignee && fields.assignee.toLowerCase() !== prevAssignee.toLowerCase()) {
+      pushAssignment(fields.assignee, "New project assigned to you", fields.title);
+    }
     closeModal();
   });
   form.title.focus();
@@ -663,6 +672,7 @@ function openSettingsModal() {
     const myName = form.myName.value.trim();
     setPrefs({ myName });
     if (myName) Store.addMember(myName); // joins the shared assignment dropdown
+    enablePush(); // (re)register this device under the current name
     closeModal();
   });
 }
@@ -687,6 +697,55 @@ function notify(title, body) {
   } catch (e) {
     console.error("Notification failed:", e);
   }
+}
+
+// ----- real push: register this device so it can be notified when closed -----
+function urlBase64ToUint8Array(base64) {
+  const pad = "=".repeat((4 - (base64.length % 4)) % 4);
+  const b64 = (base64 + pad).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(b64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+function pushSupported() {
+  return "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+}
+
+// Subscribe this device and store it against my name, so teammates can push
+// to me. Safe to call repeatedly — it reuses an existing subscription.
+async function enablePush() {
+  const prefs = getPrefs();
+  const cfg = window.EXPRESSION_CONFIG || {};
+  if (
+    !pushSupported() ||
+    !cfg.VAPID_PUBLIC_KEY ||
+    Store.getMode() !== "remote" ||
+    Notification.permission !== "granted" ||
+    !prefs.myName
+  ) {
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(cfg.VAPID_PUBLIC_KEY),
+      });
+    }
+    await Store.savePushSubscription(prefs.myName, sub.toJSON());
+  } catch (e) {
+    console.error("Push subscribe failed:", e);
+  }
+}
+
+// Notify a teammate's devices that something was assigned to them.
+function pushAssignment(name, title, body) {
+  if (!name) return;
+  Store.sendPush({ type: "assign", name, title, body, url: "./" });
 }
 
 function checkAssignments() {
@@ -847,7 +906,10 @@ document.addEventListener("click", (e) => {
       break;
     case "enable-notifications":
       if ("Notification" in window) {
-        Notification.requestPermission().then(() => openSettingsModal());
+        Notification.requestPermission().then(() => {
+          enablePush();
+          openSettingsModal();
+        });
       } else {
         alert("This browser does not support notifications.");
       }
@@ -881,9 +943,14 @@ function initAccountSelect() {
 }
 
 initAccountSelect();
+let pushRegistered = false;
 Store.onChange(() => {
   checkAssignments();
   morningReminder();
+  if (!pushRegistered && Store.getMode() === "remote") {
+    pushRegistered = true;
+    enablePush(); // no-op unless notifications are already allowed + name set
+  }
   render();
 });
 Store.init();

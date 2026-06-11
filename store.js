@@ -360,12 +360,43 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- push notifications (only meaningful with team sync on) -----
+  async function savePushSubscription(name, subscription) {
+    if (!sb) return;
+    const endpoint = subscription.endpoint;
+    const { error } = await sb
+      .from("push_subscriptions")
+      .upsert({ name, endpoint, subscription }, { onConflict: "endpoint" });
+    if (error) console.error("Could not save push subscription:", error);
+  }
+
+  async function removePushSubscription(endpoint) {
+    if (!sb || !endpoint) return;
+    await sb.from("push_subscriptions").delete().eq("endpoint", endpoint);
+  }
+
+  // Ask the Edge Function to deliver a push to a named teammate's devices.
+  // Best-effort: a missing function or offline assigner must never block
+  // the assignment itself, so failures are only logged.
+  async function sendPush(payload) {
+    if (!sb || !sb.functions) return;
+    try {
+      const { error } = await sb.functions.invoke("push", { body: payload });
+      if (error) console.error("Push send failed:", error);
+    } catch (e) {
+      console.error("Push send failed:", e);
+    }
+  }
+
   return {
     init,
     onChange,
     get: () => state,
     getMode: () => mode,
     needsUpgrade: () => upgradeNeeded,
+    savePushSubscription,
+    removePushSubscription,
+    sendPush,
     isDone,
     addItem,
     updateItem,
