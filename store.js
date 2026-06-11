@@ -6,17 +6,22 @@
  *    localStorage on this device only.
  *
  * Data model:
- *  items:        scheduled posts/tasks. Either recurring weekly (dow 0=Mon..6=Sun)
- *                or one-off (date "YYYY-MM-DD").
- *  completions:  one row per (item_id, date) that has been marked done.
- *  reels:        reel ideas with an assignee and a pipeline status.
+ *  items:        scheduled posts/tasks, each belonging to an account.
+ *                One-off (date) or recurring: weekly (dow 0=Mon..6=Sun) or
+ *                monthly (nth weekday of the month, e.g. 3rd Wednesday).
+ *                Optional start_date/end_date bound a recurring item so
+ *                changes can apply "from this week onward" without
+ *                rewriting history.
+ *  completions:  one row per (item_id, date) marked done.
+ *  projects:     reels/projects with assignee, pipeline status and a
+ *                "required by" date, per account.
  */
 window.Store = (() => {
-  const LS_KEY = "expression-data-v1";
+  const LS_KEY = "expression-data-v2";
 
   let mode = "local"; // "local" | "remote" | "local-error"
   let sb = null;
-  let state = { items: [], completions: [], reels: [] };
+  let state = { items: [], completions: [], projects: [] };
   const listeners = [];
 
   const uid = () =>
@@ -51,49 +56,74 @@ window.Store = (() => {
     saveLocal();
   }
 
-  // Placeholder weekly calendar until the real Instagram sheet is loaded in.
-  // Everything here can be edited or deleted inside the app.
+  // The Main Church standard weekly Instagram schedule, from the team's
+  // posting calendar. Everything is editable in the app.
   function seedData() {
-    const item = (title, branch, dow, extra) =>
-      Object.assign(
-        { id: uid(), title, notes: "", branch, assignee: "", recurring: true, dow, date: null },
-        extra || {}
-      );
-    const reel = (title, notes, status, assignee) => ({
-      id: uid(), title, notes, assignee: assignee || "", status, due_date: null,
+    const w = (dow, title, notes, branch) => ({
+      id: uid(), account: "main", title, notes: notes || "", branch: branch || "social",
+      assignee: "", recurring: true, recur: "weekly", dow, nth: null,
+      date: null, start_date: null, end_date: null,
+    });
+    const m = (nth, dow, title, notes) => Object.assign(w(dow, title, notes), { recur: "monthly", nth });
+    const p = (title, notes, assignee, status, due) => ({
+      id: uid(), account: "main", title, notes: notes || "", assignee: assignee || "",
+      status: status || "idea", due_date: due || null,
     });
     return {
       items: [
-        item("Motivation Monday — encouragement quote post", "social", 0),
-        item("Upload Sunday sermon to YouTube", "editing", 0),
-        item("Testimony Tuesday — share a testimony", "social", 1),
-        item("Cut sermon highlights for Spotify podcast", "editing", 1),
-        item("Midweek check-in — Bible study reminder story", "social", 2),
-        item("Throwback Thursday — photos from last service", "media", 3),
-        item("Reel drop — weekly reel goes live", "social", 4),
-        item("Sunday invite story + countdown", "social", 5),
-        item("Service day — live stories + photo coverage", "media", 6),
-        item("Post-service recap post", "social", 6),
+        // Monday
+        w(0, "Story Recap", "Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00"),
+        w(0, "Invite to Prayer Story", "Use video from drive · 08:00–10:00"),
+        w(0, "Sunday Reel", "Include engagement sticker (poll/question) · 08:00–10:00"),
+        w(0, "Upload Sunday sermon to YouTube", "", "editing"),
+        // Tuesday
+        w(1, "Prayer Story", "Scripture + prayer prompt + question sticker · 08:00–10:00"),
+        w(1, "Podcast/YT Promo Story", "20-sec audiogram + subtitles + CTA: Listen on Spotify · 08:00–10:00"),
+        w(1, "Expect Group Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
+        w(1, "Cut sermon highlights for Spotify podcast", "", "editing"),
+        // Wednesday
+        w(2, "Expect Socials Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
+        w(2, "Join a Team Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
+        m(1, 2, "Expect Group Reel", "1st Wednesday of the month"),
+        m(3, 2, "Expect Socials Reel", "3rd Wednesday of the month"),
+        // Thursday
+        w(3, "Established Post/Story", "Graphic from drive · 08:00–10:00"),
+        w(3, "Anthems Story", "Worship clip overlay + text: This has been on repeat · 08:00–10:00"),
+        w(3, "Worship rehearsal/worship story", ""),
+        m(3, 3, "Testimony Thursday Reel", "3rd Thursday of the month — special projects"),
+        // Friday
+        w(4, "Sunday Teaser Story", "Pastor 15-sec invite + sermon reveal (if clip on drive) · 08:00–10:00"),
+        w(4, "Youth Repost Story", "Add text overlay + tag someone sticker · evening"),
+        w(4, "Sermon Clip Reel", "Clip sent from media team · 08:00–10:00"),
+        // Saturday
+        w(5, "Encouragement Carousel", "Hook + Scripture + why Sunday matters + service time · 10:00"),
+        w(5, "Countdown Story", "Who are you bringing? + location + parking · 10:00"),
+        // Sunday
+        w(6, "Service day — live stories + photo coverage", "", "media"),
       ],
       completions: [],
-      reels: [
-        reel("Welcome to Expression — intro reel", "Quick cuts of the team + what each branch does.", "idea"),
-        reel("Sunday in 30 seconds — recap reel", "Best moments from last service, fast cuts to music.", "filming"),
-        reel("Worship night highlights", "Footage is in the shared drive, needs colour + captions.", "editing"),
+      projects: [
+        p("Summer social reel", "One person sitting at table alone, 2 others come sit down — 1st person says 'don't have a boring summer, come to summer social next week' + details, get off Planning Centre.", "Nesser", "posted"),
+        p("SOCIALS reel — 3rd Wednesday", "Love heart & phone: https://www.instagram.com/reel/C7Q5Rl9Czpx/", "Nesser", "filming"),
+        p("ALPHA Course", "Testimony, shopping centre, one person in crowd speaking looking at camera.", "Nesser", "filming", "2026-06-15"),
+        p("VISION Sunday", "Face to camera, photos with text of the people. Voice-over video of church at end — the vision is the people.", "Nesser", "idea", "2026-06-22"),
+        p("Wave at stool", "To be edited — Daniel to send raw footage.", "Andreea", "editing"),
+        p("Pastoral care team", "Reel to promote pastoral care and explain what it is.", "Nesser", "idea"),
+        p("Baptism", "Promote baptism — EQUIP, explain what baptism is.", "Nesser", "idea", "2026-06-22"),
       ],
     };
   }
 
   // ----- remote (Supabase) -----
   async function fetchAll() {
-    const [items, completions, reels] = await Promise.all([
+    const [items, completions, projects] = await Promise.all([
       sb.from("items").select("*").order("created_at"),
       sb.from("completions").select("*"),
-      sb.from("reels").select("*").order("created_at"),
+      sb.from("projects").select("*").order("created_at"),
     ]);
-    const err = items.error || completions.error || reels.error;
+    const err = items.error || completions.error || projects.error;
     if (err) throw err;
-    state = { items: items.data, completions: completions.data, reels: reels.data };
+    state = { items: items.data, completions: completions.data, projects: projects.data };
   }
 
   async function init() {
@@ -141,15 +171,21 @@ window.Store = (() => {
 
   // ----- items -----
   function itemRow(it) {
+    const recurring = !!it.recurring;
     return {
       id: it.id,
+      account: it.account || "main",
       title: it.title,
       notes: it.notes || "",
       branch: it.branch,
       assignee: it.assignee || "",
-      recurring: !!it.recurring,
-      dow: it.recurring ? it.dow : null,
-      date: it.recurring ? null : it.date,
+      recurring,
+      recur: recurring ? it.recur || "weekly" : null,
+      dow: recurring ? it.dow : null,
+      nth: recurring && it.recur === "monthly" ? it.nth || 1 : null,
+      date: recurring ? null : it.date,
+      start_date: recurring ? it.start_date || null : null,
+      end_date: recurring ? it.end_date || null : null,
     };
   }
 
@@ -215,10 +251,11 @@ window.Store = (() => {
     emit();
   }
 
-  // ----- reels -----
-  function reelRow(r) {
+  // ----- projects -----
+  function projectRow(r) {
     return {
       id: r.id,
+      account: r.account || "main",
       title: r.title,
       notes: r.notes || "",
       assignee: r.assignee || "",
@@ -227,24 +264,24 @@ window.Store = (() => {
     };
   }
 
-  async function addReel(fields) {
-    const r = reelRow(Object.assign({ id: uid() }, fields));
+  async function addProject(fields) {
+    const r = projectRow(Object.assign({ id: uid() }, fields));
     if (sb) {
-      const { error } = await sb.from("reels").insert(r);
+      const { error } = await sb.from("projects").insert(r);
       if (error) return remoteFail(error);
       return afterRemoteWrite();
     }
-    state.reels.push(r);
+    state.projects.push(r);
     saveLocal();
     emit();
   }
 
-  async function updateReel(id, fields) {
-    const current = state.reels.find((r) => r.id === id);
+  async function updateProject(id, fields) {
+    const current = state.projects.find((r) => r.id === id);
     if (!current) return;
-    const next = reelRow(Object.assign({}, current, fields, { id }));
+    const next = projectRow(Object.assign({}, current, fields, { id }));
     if (sb) {
-      const { error } = await sb.from("reels").update(next).eq("id", id);
+      const { error } = await sb.from("projects").update(next).eq("id", id);
       if (error) return remoteFail(error);
       return afterRemoteWrite();
     }
@@ -253,13 +290,13 @@ window.Store = (() => {
     emit();
   }
 
-  async function deleteReel(id) {
+  async function deleteProject(id) {
     if (sb) {
-      const { error } = await sb.from("reels").delete().eq("id", id);
+      const { error } = await sb.from("projects").delete().eq("id", id);
       if (error) return remoteFail(error);
       return afterRemoteWrite();
     }
-    state.reels = state.reels.filter((r) => r.id !== id);
+    state.projects = state.projects.filter((r) => r.id !== id);
     saveLocal();
     emit();
   }
@@ -274,8 +311,8 @@ window.Store = (() => {
     updateItem,
     deleteItem,
     setDone,
-    addReel,
-    updateReel,
-    deleteReel,
+    addProject,
+    updateProject,
+    deleteProject,
   };
 })();

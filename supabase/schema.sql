@@ -1,17 +1,24 @@
 -- EXPRESSION media team hub — database setup.
 -- Run this once in your Supabase project: SQL Editor -> New query -> paste -> Run.
 
--- Scheduled posts / tasks. Either repeats weekly (dow: 0=Monday .. 6=Sunday)
--- or happens on one specific date.
+-- Scheduled posts / tasks, per account ('main' | 'ya' | 'yth' | 'her').
+-- One-off (date) or recurring: weekly (dow 0=Monday..6=Sunday) or monthly
+-- (nth weekday, e.g. nth=3 dow=2 -> 3rd Wednesday). start_date/end_date
+-- bound a recurring item so changes can apply "from this week onward".
 create table if not exists items (
   id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
   title text not null,
   notes text not null default '',
   branch text not null default 'social', -- social | media | editing
   assignee text not null default '',
   recurring boolean not null default false,
+  recur text check (recur in ('weekly', 'monthly')),
   dow int check (dow between 0 and 6),
+  nth int check (nth between 1 and 4),
   date date,
+  start_date date,
+  end_date date,
   created_at timestamptz not null default now()
 );
 
@@ -24,14 +31,15 @@ create table if not exists completions (
   unique (item_id, date)
 );
 
--- Reels pipeline.
-create table if not exists reels (
+-- Projects pipeline (reels, videos, campaigns), per account.
+create table if not exists projects (
   id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
   title text not null,
   notes text not null default '',
   assignee text not null default '',
   status text not null default 'idea', -- idea | approved | filming | editing | ready | posted
-  due_date date,
+  due_date date, -- "required by"
   created_at timestamptz not null default now()
 );
 
@@ -39,32 +47,58 @@ create table if not exists reels (
 -- anon key gets full read/write. Don't post the app link publicly.
 alter table items enable row level security;
 alter table completions enable row level security;
-alter table reels enable row level security;
+alter table projects enable row level security;
 
 create policy "team access" on items for all using (true) with check (true);
 create policy "team access" on completions for all using (true) with check (true);
-create policy "team access" on reels for all using (true) with check (true);
+create policy "team access" on projects for all using (true) with check (true);
 
 -- Live updates: when one person changes something, everyone else sees it.
 alter publication supabase_realtime add table items;
 alter publication supabase_realtime add table completions;
-alter publication supabase_realtime add table reels;
+alter publication supabase_realtime add table projects;
 
--- Starter weekly calendar (placeholder until the real Instagram sheet is
--- loaded). Safe to edit or delete from inside the app.
-insert into items (title, branch, recurring, dow) values
-  ('Motivation Monday — encouragement quote post', 'social',  true, 0),
-  ('Upload Sunday sermon to YouTube',              'editing', true, 0),
-  ('Testimony Tuesday — share a testimony',        'social',  true, 1),
-  ('Cut sermon highlights for Spotify podcast',    'editing', true, 1),
-  ('Midweek check-in — Bible study reminder story','social',  true, 2),
-  ('Throwback Thursday — photos from last service','media',   true, 3),
-  ('Reel drop — weekly reel goes live',            'social',  true, 4),
-  ('Sunday invite story + countdown',              'social',  true, 5),
-  ('Service day — live stories + photo coverage',  'media',   true, 6),
-  ('Post-service recap post',                      'social',  true, 6);
+-- ---------------------------------------------------------------
+-- Main Church standard weekly Instagram schedule (from the team's
+-- posting calendar). All editable in the app afterwards.
+-- ---------------------------------------------------------------
+insert into items (account, title, notes, branch, recurring, recur, dow, nth) values
+  -- Monday
+  ('main', 'Story Recap', 'Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00', 'social', true, 'weekly', 0, null),
+  ('main', 'Invite to Prayer Story', 'Use video from drive · 08:00–10:00', 'social', true, 'weekly', 0, null),
+  ('main', 'Sunday Reel', 'Include engagement sticker (poll/question) · 08:00–10:00', 'social', true, 'weekly', 0, null),
+  ('main', 'Upload Sunday sermon to YouTube', '', 'editing', true, 'weekly', 0, null),
+  -- Tuesday
+  ('main', 'Prayer Story', 'Scripture + prayer prompt + question sticker · 08:00–10:00', 'social', true, 'weekly', 1, null),
+  ('main', 'Podcast/YT Promo Story', '20-sec audiogram + subtitles + CTA: Listen on Spotify · 08:00–10:00', 'social', true, 'weekly', 1, null),
+  ('main', 'Expect Group Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 1, null),
+  ('main', 'Cut sermon highlights for Spotify podcast', '', 'editing', true, 'weekly', 1, null),
+  -- Wednesday
+  ('main', 'Expect Socials Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 2, null),
+  ('main', 'Join a Team Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 2, null),
+  ('main', 'Expect Group Reel', '1st Wednesday of the month', 'social', true, 'monthly', 2, 1),
+  ('main', 'Expect Socials Reel', '3rd Wednesday of the month', 'social', true, 'monthly', 2, 3),
+  -- Thursday
+  ('main', 'Established Post/Story', 'Graphic from drive · 08:00–10:00', 'social', true, 'weekly', 3, null),
+  ('main', 'Anthems Story', 'Worship clip overlay + text: This has been on repeat · 08:00–10:00', 'social', true, 'weekly', 3, null),
+  ('main', 'Worship rehearsal/worship story', '', 'social', true, 'weekly', 3, null),
+  ('main', 'Testimony Thursday Reel', '3rd Thursday of the month — special projects', 'social', true, 'monthly', 3, 3),
+  -- Friday
+  ('main', 'Sunday Teaser Story', 'Pastor 15-sec invite + sermon reveal (if clip on drive) · 08:00–10:00', 'social', true, 'weekly', 4, null),
+  ('main', 'Youth Repost Story', 'Add text overlay + tag someone sticker · evening', 'social', true, 'weekly', 4, null),
+  ('main', 'Sermon Clip Reel', 'Clip sent from media team · 08:00–10:00', 'social', true, 'weekly', 4, null),
+  -- Saturday
+  ('main', 'Encouragement Carousel', 'Hook + Scripture + why Sunday matters + service time · 10:00', 'social', true, 'weekly', 5, null),
+  ('main', 'Countdown Story', 'Who are you bringing? + location + parking · 10:00', 'social', true, 'weekly', 5, null),
+  -- Sunday
+  ('main', 'Service day — live stories + photo coverage', '', 'media', true, 'weekly', 6, null);
 
-insert into reels (title, notes, status) values
-  ('Welcome to Expression — intro reel', 'Quick cuts of the team + what each branch does.', 'idea'),
-  ('Sunday in 30 seconds — recap reel',  'Best moments from last service, fast cuts to music.', 'filming'),
-  ('Worship night highlights',           'Footage is in the shared drive, needs colour + captions.', 'editing');
+-- Projects from the Special Reels Tracker.
+insert into projects (account, title, notes, assignee, status, due_date) values
+  ('main', 'Summer social reel', 'One person sitting at table alone, 2 others come sit down — 1st person says ''don''t have a boring summer, come to summer social next week'' + details, get off Planning Centre.', 'Nesser', 'posted', null),
+  ('main', 'SOCIALS reel — 3rd Wednesday', 'Love heart & phone: https://www.instagram.com/reel/C7Q5Rl9Czpx/', 'Nesser', 'filming', null),
+  ('main', 'ALPHA Course', 'Testimony, shopping centre, one person in crowd speaking looking at camera.', 'Nesser', 'filming', '2026-06-15'),
+  ('main', 'VISION Sunday', 'Face to camera, photos with text of the people. Voice-over video of church at end — the vision is the people.', 'Nesser', 'idea', '2026-06-22'),
+  ('main', 'Wave at stool', 'To be edited — Daniel to send raw footage.', 'Andreea', 'editing', null),
+  ('main', 'Pastoral care team', 'Reel to promote pastoral care and explain what it is.', 'Nesser', 'idea', null),
+  ('main', 'Baptism', 'Promote baptism — EQUIP, explain what baptism is.', 'Nesser', 'idea', '2026-06-22');

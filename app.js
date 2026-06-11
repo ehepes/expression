@@ -1,12 +1,19 @@
 /* EXPRESSION — media team hub. UI layer. */
 
+const ACCOUNTS = {
+  main: "Main Church",
+  ya: "YA",
+  yth: "YTH",
+  her: "HER",
+};
+
 const BRANCHES = {
   social: { name: "Social Media Team", short: "Social", color: "#3B82F6", desc: "Instagram posts, stories & captions" },
   media: { name: "Photo & Media Team", short: "Media", color: "#8B5CF6", desc: "Photography, filming & visuals" },
   editing: { name: "Editing Team", short: "Editing", color: "#10B981", desc: "YouTube & Spotify content" },
 };
 
-const REEL_STATUSES = [
+const PROJECT_STATUSES = [
   ["idea", "Idea"],
   ["approved", "Approved"],
   ["filming", "Filming"],
@@ -25,13 +32,28 @@ const STATUS_COLORS = {
 };
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const NTH_NAMES = ["1st", "2nd", "3rd", "4th"];
+
+// ----- per-device preferences -----
+function getPrefs() {
+  try {
+    return JSON.parse(localStorage.getItem("expression-prefs") || "{}");
+  } catch (e) {
+    return {};
+  }
+}
+
+function setPrefs(patch) {
+  localStorage.setItem("expression-prefs", JSON.stringify(Object.assign(getPrefs(), patch)));
+}
 
 // ----- app state -----
-let tab = ["week", "reels", "teams"].includes(location.hash.slice(1))
+let tab = ["week", "projects", "teams"].includes(location.hash.slice(1))
   ? location.hash.slice(1)
   : "week";
 let branchFilter = "all";
 let weekStart = startOfWeek(new Date());
+let account = ACCOUNTS[getPrefs().account] ? getPrefs().account : "main";
 
 // ----- date helpers (local time, Monday-start weeks) -----
 function ymd(d) {
@@ -69,13 +91,31 @@ function esc(s) {
 }
 
 // ----- derived data -----
+// Whether a (possibly recurring) item appears on a given date.
+function showsOn(it, date, dateStr) {
+  if (!it.recurring) return it.date === dateStr;
+  if (it.start_date && dateStr < it.start_date) return false;
+  if (it.end_date && dateStr > it.end_date) return false;
+  if (it.dow !== (date.getDay() + 6) % 7) return false;
+  if ((it.recur || "weekly") === "monthly") {
+    return Math.floor((date.getDate() - 1) / 7) + 1 === (it.nth || 1);
+  }
+  return true;
+}
+
+function accountItems() {
+  return Store.get().items.filter((it) => (it.account || "main") === account);
+}
+
+function accountProjects() {
+  return Store.get().projects.filter((r) => (r.account || "main") === account);
+}
+
 function itemsForDate(date) {
-  const { items } = Store.get();
   const dateStr = ymd(date);
-  const dow = (date.getDay() + 6) % 7;
-  return items.filter((it) => {
+  return accountItems().filter((it) => {
     if (branchFilter !== "all" && it.branch !== branchFilter) return false;
-    return it.recurring ? it.dow === dow : it.date === dateStr;
+    return showsOn(it, date, dateStr);
   });
 }
 
@@ -85,12 +125,10 @@ function weekStats(filterBranch) {
   for (let i = 0; i < 7; i++) {
     const date = addDays(weekStart, i);
     const dateStr = ymd(date);
-    const dow = i;
-    Store.get().items.forEach((it) => {
+    accountItems().forEach((it) => {
       if (filterBranch && it.branch !== filterBranch) return;
       if (branchFilter !== "all" && !filterBranch && it.branch !== branchFilter) return;
-      const onDay = it.recurring ? it.dow === dow : it.date === dateStr;
-      if (!onDay) return;
+      if (!showsOn(it, date, dateStr)) return;
       total++;
       if (Store.isDone(it.id, dateStr)) done++;
     });
@@ -98,16 +136,26 @@ function weekStats(filterBranch) {
   return { total, done };
 }
 
+function repeatLabel(it) {
+  if (!it.recurring) return "";
+  if ((it.recur || "weekly") === "monthly") {
+    return `${NTH_NAMES[(it.nth || 1) - 1]} ${DAY_NAMES[it.dow].slice(0, 3)} monthly`;
+  }
+  return "weekly";
+}
+
 // ----- rendering -----
 function render() {
   renderSyncBadge();
   renderBanner();
+  const sel = document.getElementById("account-select");
+  if (sel && sel.value !== account) sel.value = account;
   document.querySelectorAll(".tab").forEach((b) => {
     b.classList.toggle("active", b.dataset.tab === tab);
   });
   const view = document.getElementById("view");
   if (tab === "week") view.innerHTML = renderWeek();
-  else if (tab === "reels") view.innerHTML = renderReels();
+  else if (tab === "projects") view.innerHTML = renderProjects();
   else view.innerHTML = renderTeams();
 }
 
@@ -137,6 +185,20 @@ function renderBanner() {
   }
 }
 
+function weekNavHtml() {
+  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
+  return `
+    <div class="week-nav">
+      <button class="icon-btn" data-action="week-prev" aria-label="Previous week">&#8249;</button>
+      <label class="range jump" title="Jump to any week or month">
+        ${range} <span class="jump-hint">&#9662;</span>
+        <input type="date" id="jump-date" value="${ymd(weekStart)}" aria-label="Jump to date" />
+      </label>
+      <button class="pill-btn" data-action="week-today">Today</button>
+      <button class="icon-btn" data-action="week-next" aria-label="Next week">&#8250;</button>
+    </div>`;
+}
+
 function chipsHtml() {
   const chips = [["all", "All teams"]].concat(
     Object.entries(BRANCHES).map(([k, b]) => [k, b.short])
@@ -153,13 +215,14 @@ function chipsHtml() {
   );
 }
 
-function taskRowHtml(it, dateStr, opts) {
+function taskRowHtml(it, dateStr) {
   const done = Store.isDone(it.id, dateStr);
   const b = BRANCHES[it.branch] || BRANCHES.social;
+  const rep = repeatLabel(it);
   const meta = [
     `<span class="bdot" style="background:${b.color}"></span><span>${esc(b.short)}</span>`,
     it.assignee ? `<span>&#128100; ${esc(it.assignee)}</span>` : "",
-    it.recurring ? '<span class="repeat-tag">&#8635; weekly</span>' : "",
+    rep ? `<span class="repeat-tag">&#8635; ${rep}</span>` : "",
   ]
     .filter(Boolean)
     .join("");
@@ -177,7 +240,6 @@ function renderWeek() {
   const today = ymd(new Date());
   const { total, done } = weekStats();
   const pct = total ? Math.round((done / total) * 100) : 0;
-  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
 
   let days = "";
   for (let i = 0; i < 7; i++) {
@@ -202,62 +264,57 @@ function renderWeek() {
   }
 
   return `
-    <div class="week-nav">
-      <button class="icon-btn" data-action="week-prev" aria-label="Previous week">&#8249;</button>
-      <span class="range">${range}</span>
-      <button class="pill-btn" data-action="week-today">Today</button>
-      <button class="icon-btn" data-action="week-next" aria-label="Next week">&#8250;</button>
-    </div>
+    ${weekNavHtml()}
     ${chipsHtml()}
     <div class="progress-card">
-      <div class="label"><span>This week</span><span>${done} of ${total} done</span></div>
+      <div class="label"><span>This week · ${esc(ACCOUNTS[account])}</span><span>${done} of ${total} done</span></div>
       <div class="bar"><span style="width:${pct}%"></span></div>
     </div>
     ${days}`;
 }
 
-function renderReels() {
-  const { reels } = Store.get();
+function renderProjects() {
+  const projects = accountProjects();
   let sections = "";
-  REEL_STATUSES.forEach(([key, label]) => {
-    const group = reels.filter((r) => (r.status || "idea") === key);
+  PROJECT_STATUSES.forEach(([key, label]) => {
+    const group = projects.filter((r) => (r.status || "idea") === key);
     if (!group.length) return;
     sections += `<div class="section-title">${label} · ${group.length}</div>`;
-    sections += group.map(reelCardHtml).join("");
+    sections += group.map(projectCardHtml).join("");
   });
   if (!sections) {
     sections =
-      '<div class="empty-state">No reels yet.<br/>Tap <b>New reel</b> to add your first idea.</div>';
+      '<div class="empty-state">No projects yet for ' + esc(ACCOUNTS[account]) + '.<br/>Tap <b>New project</b> to add your first idea.</div>';
   }
   return `
-    <div class="reels-head">
-      <h2>Reels</h2>
-      <button class="primary-btn" data-action="add-reel">+ New reel</button>
+    <div class="projects-head">
+      <h2>Projects</h2>
+      <button class="primary-btn" data-action="add-project">+ New project</button>
     </div>
     ${sections}`;
 }
 
-function reelCardHtml(r) {
-  const idx = Math.max(0, REEL_STATUSES.findIndex(([k]) => k === r.status));
-  const pct = Math.round((idx / (REEL_STATUSES.length - 1)) * 100);
-  const label = REEL_STATUSES[idx][1];
+function projectCardHtml(r) {
+  const idx = Math.max(0, PROJECT_STATUSES.findIndex(([k]) => k === r.status));
+  const pct = Math.round((idx / (PROJECT_STATUSES.length - 1)) * 100);
+  const label = PROJECT_STATUSES[idx][1];
   const chipStyle = STATUS_COLORS[r.status] || STATUS_COLORS.idea;
-  const next = REEL_STATUSES[idx + 1];
+  const next = PROJECT_STATUSES[idx + 1];
   return `
-    <div class="reel-card" data-action="edit-reel" data-id="${r.id}">
-      <div class="reel-top">
-        <div class="reel-title">${esc(r.title)}</div>
+    <div class="project-card" data-action="edit-project" data-id="${r.id}">
+      <div class="project-top">
+        <div class="project-title">${esc(r.title)}</div>
         <span class="status-chip" style="background:${chipStyle}">${label}</span>
       </div>
-      ${r.notes ? `<div class="reel-notes">${esc(r.notes)}</div>` : ""}
-      <div class="reel-meta">
+      ${r.notes ? `<div class="project-notes">${esc(r.notes)}</div>` : ""}
+      <div class="project-meta">
         ${r.assignee ? `<span>&#128100; ${esc(r.assignee)}</span>` : "<span>Unassigned</span>"}
-        ${r.due_date ? `<span>&#128197; due ${esc(r.due_date)}</span>` : ""}
+        ${r.due_date ? `<span>&#128197; required by ${esc(r.due_date)}</span>` : ""}
       </div>
-      <div class="bar reel-bar"><span style="width:${pct}%"></span></div>
+      <div class="bar project-bar"><span style="width:${pct}%"></span></div>
       ${
         next
-          ? `<div class="reel-actions"><button class="advance-btn" data-action="advance-reel" data-id="${r.id}">Move to ${next[1]} &#8594;</button></div>`
+          ? `<div class="project-actions"><button class="advance-btn" data-action="advance-project" data-id="${r.id}">Move to ${next[1]} &#8594;</button></div>`
           : ""
       }
     </div>`;
@@ -274,9 +331,8 @@ function renderTeams() {
     for (let i = 0; i < 7; i++) {
       const date = addDays(weekStart, i);
       const dateStr = ymd(date);
-      const dow = i;
-      Store.get()
-        .items.filter((it) => it.branch === key && (it.recurring ? it.dow === dow : it.date === dateStr))
+      accountItems()
+        .filter((it) => it.branch === key && showsOn(it, date, dateStr))
         .forEach((it) => {
           rows += taskRowHtml(it, dateStr);
         });
@@ -297,15 +353,7 @@ function renderTeams() {
       </div>`;
   });
 
-  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
-  return `
-    <div class="week-nav">
-      <button class="icon-btn" data-action="week-prev" aria-label="Previous week">&#8249;</button>
-      <span class="range">${range}</span>
-      <button class="pill-btn" data-action="week-today">Today</button>
-      <button class="icon-btn" data-action="week-next" aria-label="Next week">&#8250;</button>
-    </div>
-    ${cards}`;
+  return `${weekNavHtml()}${cards}`;
 }
 
 // ----- modals -----
@@ -321,14 +369,20 @@ function openItemModal(opts) {
     branch: opts.branch || (branchFilter !== "all" ? branchFilter : "social"),
     assignee: "",
     recurring: false,
+    recur: "weekly",
     dow: 0,
+    nth: 1,
     date: opts.date || ymd(new Date()),
   };
+  const schedule = !it.recurring ? "once" : (it.recur || "weekly") === "monthly" ? "monthly" : "weekly";
   const branchOpts = Object.entries(BRANCHES)
     .map(([k, b]) => `<option value="${k}" ${it.branch === k ? "selected" : ""}>${b.name}</option>`)
     .join("");
   const dayOpts = DAY_NAMES.map(
     (d, i) => `<option value="${i}" ${(it.dow ?? 0) === i ? "selected" : ""}>${d}</option>`
+  ).join("");
+  const nthOpts = NTH_NAMES.map(
+    (n, i) => `<option value="${i + 1}" ${(it.nth || 1) === i + 1 ? "selected" : ""}>${n}</option>`
   ).join("");
 
   document.getElementById("modal-root").innerHTML = `
@@ -354,14 +408,33 @@ function openItemModal(opts) {
         <div class="field">
           <label>When</label>
           <div class="radio-row">
-            <label><input type="radio" name="schedule" value="once" ${!it.recurring ? "checked" : ""}/> One date</label>
-            <label><input type="radio" name="schedule" value="weekly" ${it.recurring ? "checked" : ""}/> Repeats weekly</label>
+            <label><input type="radio" name="schedule" value="once" ${schedule === "once" ? "checked" : ""}/> One date</label>
+            <label><input type="radio" name="schedule" value="weekly" ${schedule === "weekly" ? "checked" : ""}/> Weekly</label>
+            <label><input type="radio" name="schedule" value="monthly" ${schedule === "monthly" ? "checked" : ""}/> Monthly</label>
           </div>
-          <input type="date" name="date" value="${esc(it.date || opts.date || ymd(new Date()))}" style="display:${it.recurring ? "none" : "block"}" />
-          <select name="dow" style="display:${it.recurring ? "block" : "none"}">${dayOpts}</select>
+          <input type="date" name="date" value="${esc(it.date || opts.date || ymd(new Date()))}" />
+          <div class="row-2">
+            <select name="nth">${nthOpts}</select>
+            <select name="dow">${dayOpts}</select>
+          </div>
         </div>
+        ${
+          editing && editing.recurring
+            ? `<div class="field future-only">
+                 <label class="check-label"><input type="checkbox" name="futureOnly" />
+                 Apply changes from this week onward only (past weeks stay as they were)</label>
+               </div>`
+            : ""
+        }
         <div class="modal-actions">
-          ${editing ? '<button type="button" class="danger-btn" data-action="delete-item" data-id="' + editing.id + '">Delete</button>' : ""}
+          ${
+            editing
+              ? `<button type="button" class="danger-btn" data-action="delete-item" data-id="${editing.id}">Delete</button>` +
+                (editing.recurring
+                  ? `<button type="button" class="ghost-btn" data-action="stop-item" data-id="${editing.id}" title="Keeps past weeks, removes it from this week on">Stop from this week</button>`
+                  : "")
+              : ""
+          }
           <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
           <button type="submit" class="primary-btn">${editing ? "Save" : "Add"}</button>
         </div>
@@ -369,47 +442,65 @@ function openItemModal(opts) {
     </div>`;
 
   const form = document.getElementById("item-form");
-  form.querySelectorAll('input[name="schedule"]').forEach((radio) => {
-    radio.addEventListener("change", () => {
-      const weekly = form.schedule.value === "weekly";
-      form.date.style.display = weekly ? "none" : "block";
-      form.dow.style.display = weekly ? "block" : "none";
-    });
-  });
+  const syncScheduleFields = () => {
+    const s = form.schedule.value;
+    form.date.style.display = s === "once" ? "block" : "none";
+    form.querySelector(".row-2").style.display = s === "once" ? "none" : "flex";
+    form.nth.style.display = s === "monthly" ? "block" : "none";
+  };
+  form.querySelectorAll('input[name="schedule"]').forEach((radio) =>
+    radio.addEventListener("change", syncScheduleFields)
+  );
+  syncScheduleFields();
+
   form.addEventListener("submit", (e) => {
     e.preventDefault();
-    const weekly = form.schedule.value === "weekly";
+    const s = form.schedule.value;
     const fields = {
+      account,
       title: form.title.value.trim(),
       branch: form.branch.value,
       assignee: form.assignee.value.trim(),
       notes: form.notes.value.trim(),
-      recurring: weekly,
-      dow: weekly ? Number(form.dow.value) : null,
-      date: weekly ? null : form.date.value || ymd(new Date()),
+      recurring: s !== "once",
+      recur: s === "monthly" ? "monthly" : "weekly",
+      dow: s === "once" ? null : Number(form.dow.value),
+      nth: s === "monthly" ? Number(form.nth.value) : null,
+      date: s === "once" ? form.date.value || ymd(new Date()) : null,
     };
     if (!fields.title) return;
-    if (editing) Store.updateItem(editing.id, fields);
-    else Store.addItem(fields);
+    if (editing) {
+      const futureOnly = form.futureOnly && form.futureOnly.checked && editing.recurring && fields.recurring;
+      if (futureOnly) {
+        // Split: the old item ends before this week, a new one starts here.
+        const boundary = ymd(weekStart);
+        Store.updateItem(editing.id, { end_date: ymd(addDays(weekStart, -1)) });
+        Store.addItem(Object.assign({}, fields, { start_date: boundary, end_date: null }));
+      } else {
+        Store.updateItem(editing.id, fields);
+      }
+    } else {
+      Store.addItem(fields);
+    }
     closeModal();
   });
   form.title.focus();
 }
 
-function openReelModal(id) {
-  const editing = id ? Store.get().reels.find((r) => r.id === id) : null;
+function openProjectModal(id) {
+  const editing = id ? Store.get().projects.find((r) => r.id === id) : null;
   const r = editing || { title: "", notes: "", assignee: "", status: "idea", due_date: "" };
-  const statusOpts = REEL_STATUSES.map(
+  const statusOpts = PROJECT_STATUSES.map(
     ([k, label]) => `<option value="${k}" ${r.status === k ? "selected" : ""}>${label}</option>`
   ).join("");
 
   document.getElementById("modal-root").innerHTML = `
     <div class="modal-overlay" data-action="close-modal">
-      <form class="modal" id="reel-form">
-        <h2>${editing ? "Edit reel" : "New reel"}</h2>
+      <form class="modal" id="project-form">
+        <h2>${editing ? "Edit project" : "New project"}</h2>
         <div class="field">
-          <label>Reel title</label>
-          <input type="text" name="title" required maxlength="200" value="${esc(r.title)}" placeholder="e.g. Youth night recap" />
+          <label>Project title</label>
+          <input type="text" name="title" required maxlength="200" value="${esc(r.title)}" placeholder="e.g. Youth night recap reel" />
         </div>
         <div class="field">
           <label>Idea / notes</label>
@@ -424,21 +515,22 @@ function openReelModal(id) {
           <select name="status">${statusOpts}</select>
         </div>
         <div class="field">
-          <label>Target date</label>
+          <label>Required by</label>
           <input type="date" name="due_date" value="${esc(r.due_date || "")}" />
         </div>
         <div class="modal-actions">
-          ${editing ? '<button type="button" class="danger-btn" data-action="delete-reel" data-id="' + editing.id + '">Delete</button>' : ""}
+          ${editing ? '<button type="button" class="danger-btn" data-action="delete-project" data-id="' + editing.id + '">Delete</button>' : ""}
           <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
-          <button type="submit" class="primary-btn">${editing ? "Save" : "Add reel"}</button>
+          <button type="submit" class="primary-btn">${editing ? "Save" : "Add project"}</button>
         </div>
       </form>
     </div>`;
 
-  const form = document.getElementById("reel-form");
+  const form = document.getElementById("project-form");
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const fields = {
+      account,
       title: form.title.value.trim(),
       notes: form.notes.value.trim(),
       assignee: form.assignee.value.trim(),
@@ -446,11 +538,73 @@ function openReelModal(id) {
       due_date: form.due_date.value || null,
     };
     if (!fields.title) return;
-    if (editing) Store.updateReel(editing.id, fields);
-    else Store.addReel(fields);
+    if (editing) Store.updateProject(editing.id, fields);
+    else Store.addProject(fields);
     closeModal();
   });
   form.title.focus();
+}
+
+function openSettingsModal() {
+  const prefs = getPrefs();
+  const granted = "Notification" in window && Notification.permission === "granted";
+  document.getElementById("modal-root").innerHTML = `
+    <div class="modal-overlay" data-action="close-modal">
+      <form class="modal" id="settings-form">
+        <h2>Settings</h2>
+        <div class="field">
+          <label>Your name</label>
+          <input type="text" name="myName" maxlength="80" value="${esc(prefs.myName || "")}" placeholder="So assignments can find you" />
+          <p class="hint">When a project is assigned to this name, this device gets a notification (needs team sync on and notifications allowed).</p>
+        </div>
+        <div class="field">
+          <button type="button" class="ghost-btn" data-action="enable-notifications" ${granted ? "disabled" : ""}>
+            ${granted ? "Notifications enabled ✓" : "Allow notifications on this device"}
+          </button>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
+          <button type="submit" class="primary-btn">Save</button>
+        </div>
+      </form>
+    </div>`;
+  const form = document.getElementById("settings-form");
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    setPrefs({ myName: form.myName.value.trim() });
+    closeModal();
+  });
+}
+
+// ----- assignment notifications (works while the app is open, team sync on) -----
+let prevAssignees = null;
+
+function checkAssignments() {
+  const prefs = getPrefs();
+  const current = {};
+  Store.get().projects.forEach((r) => {
+    current[r.id] = r.assignee || "";
+  });
+  if (
+    prevAssignees &&
+    Store.getMode() === "remote" &&
+    prefs.myName &&
+    "Notification" in window &&
+    Notification.permission === "granted"
+  ) {
+    const me = prefs.myName.trim().toLowerCase();
+    Store.get().projects.forEach((r) => {
+      const now = (r.assignee || "").trim().toLowerCase();
+      const before = (prevAssignees[r.id] || "").trim().toLowerCase();
+      if (now === me && before !== me) {
+        new Notification("New project assigned to you", {
+          body: r.title,
+          icon: "icons/icon-192.png",
+        });
+      }
+    });
+  }
+  prevAssignees = current;
 }
 
 // ----- events -----
@@ -485,7 +639,6 @@ document.addEventListener("click", (e) => {
       render();
       break;
     case "toggle-done": {
-      e.stopPropagation();
       const { id, date } = el.dataset;
       Store.setDone(id, date, !Store.isDone(id, date));
       break;
@@ -495,34 +648,49 @@ document.addEventListener("click", (e) => {
       break;
     case "edit-item":
       if (e.target.closest('[data-action="toggle-done"]')) break;
-      openItemModal({ id: el.dataset.id });
+      openItemModal({ id: el.dataset.id, date: el.dataset.date });
       break;
-    case "add-reel":
-      openReelModal();
+    case "add-project":
+      openProjectModal();
       break;
-    case "edit-reel":
-      if (e.target.closest('[data-action="advance-reel"]')) break;
-      openReelModal(el.dataset.id);
+    case "edit-project":
+      if (e.target.closest('[data-action="advance-project"]')) break;
+      openProjectModal(el.dataset.id);
       break;
-    case "advance-reel": {
-      e.stopPropagation();
-      const reel = Store.get().reels.find((r) => r.id === el.dataset.id);
-      if (!reel) break;
-      const idx = REEL_STATUSES.findIndex(([k]) => k === reel.status);
-      const next = REEL_STATUSES[idx + 1];
-      if (next) Store.updateReel(reel.id, { status: next[0] });
+    case "advance-project": {
+      const project = Store.get().projects.find((r) => r.id === el.dataset.id);
+      if (!project) break;
+      const idx = PROJECT_STATUSES.findIndex(([k]) => k === project.status);
+      const next = PROJECT_STATUSES[idx + 1];
+      if (next) Store.updateProject(project.id, { status: next[0] });
       break;
     }
+    case "stop-item":
+      if (confirm("Remove this from this week onward? Past weeks keep it.")) {
+        Store.updateItem(el.dataset.id, { end_date: ymd(addDays(weekStart, -1)) });
+        closeModal();
+      }
+      break;
     case "delete-item":
       if (confirm("Delete this item everywhere (including past weeks)?")) {
         Store.deleteItem(el.dataset.id);
         closeModal();
       }
       break;
-    case "delete-reel":
-      if (confirm("Delete this reel?")) {
-        Store.deleteReel(el.dataset.id);
+    case "delete-project":
+      if (confirm("Delete this project?")) {
+        Store.deleteProject(el.dataset.id);
         closeModal();
+      }
+      break;
+    case "settings":
+      openSettingsModal();
+      break;
+    case "enable-notifications":
+      if ("Notification" in window) {
+        Notification.requestPermission().then(() => openSettingsModal());
+      } else {
+        alert("This browser does not support notifications.");
       }
       break;
     case "close-modal":
@@ -531,8 +699,33 @@ document.addEventListener("click", (e) => {
   }
 });
 
+// Jump to any week via the native date picker on the week-range label.
+document.addEventListener("change", (e) => {
+  if (e.target.id === "jump-date" && e.target.value) {
+    const [y, m, d] = e.target.value.split("-").map(Number);
+    weekStart = startOfWeek(new Date(y, m - 1, d));
+    render();
+  } else if (e.target.id === "account-select") {
+    account = e.target.value;
+    setPrefs({ account });
+    render();
+  }
+});
+
 // ----- boot -----
-Store.onChange(render);
+function initAccountSelect() {
+  const sel = document.getElementById("account-select");
+  sel.innerHTML = Object.entries(ACCOUNTS)
+    .map(([k, name]) => `<option value="${k}">${name}</option>`)
+    .join("");
+  sel.value = account;
+}
+
+initAccountSelect();
+Store.onChange(() => {
+  checkAssignments();
+  render();
+});
 Store.init();
 
 if ("serviceWorker" in navigator) {

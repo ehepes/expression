@@ -12,11 +12,17 @@ It covers the three branches of the team:
 **Features**
 
 - **Week view** — see everything that needs to happen each day of the week,
-  tick items off as they're done, and jump between weeks. Posts can repeat
-  weekly (like a posting schedule) or be one-off.
-- **Reels pipeline** — capture reel ideas, assign them to people, and track
-  progress through Idea → Approved → Filming → Editing → Ready → Posted.
+  tick items off as they're done, flip between weeks, or tap the date range
+  to jump straight to any week or month. Posts can be one-off, weekly, or
+  monthly (e.g. "3rd Wednesday"). Recurring posts can be edited "from this
+  week onward" without changing past weeks.
+- **Projects pipeline** — capture ideas, assign them to people, set a
+  "required by" date, and track progress through Idea → Approved → Filming
+  → Editing → Ready → Posted. Assignment notifications fire on devices
+  where the person has set their name (Settings ⚙) — needs team sync on.
 - **Teams view** — each branch's weekly progress and task list at a glance.
+- **Accounts** — separate content plans for Main Church, YA, YTH and HER,
+  switchable from the dropdown under the header.
 - Works on any phone or laptop from a link; installable like a real app
   (no app store, no fees); works offline.
 
@@ -70,13 +76,13 @@ It gets its own icon, opens full-screen, and works offline.
   date* for a single post or *Repeats weekly* for the standing schedule
   (e.g. "Reel drop every Friday"). Tap the checkbox to mark it done for that
   day; tap the row to edit or delete it.
-- **Reels** tab: **+ New reel** to capture an idea. Assign someone, set a
-  target date, and use **Move to …** to advance it through the pipeline.
+- **Projects** tab: **+ New project** to capture an idea. Assign someone,
+  set a "required by" date, and use **Move to …** to advance it.
 - **Teams** tab: each branch's weekly progress, plus quick add per team.
 
-The app ships with a **placeholder weekly calendar** — replace those items
-with the real Instagram schedule (edit or delete them right in the app, or
-update the inserts at the bottom of `supabase/schema.sql` before running it).
+The app ships with the **Main Church standard weekly Instagram schedule**
+(from the team's posting calendar) plus the Special Reels Tracker projects.
+The YA, YTH and HER accounts start blank, ready to populate in-app.
 
 ## Project layout
 
