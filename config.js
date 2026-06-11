@@ -14,6 +14,6 @@
 //   5. Commit/redeploy. Done — everyone now shares the same data.
 // ---------------------------------------------------------------
 window.EXPRESSION_CONFIG = {
-  SUPABASE_URL: "",
-  SUPABASE_ANON_KEY: "",
+  SUPABASE_URL: "https://lboueyjikfjtycymigtw.supabase.co",
+  SUPABASE_ANON_KEY: "sb_publishable_jy9ovCKRPW-G1B0QjWELuQ_RlE26hwv",
 };
