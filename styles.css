@@ -24,6 +24,12 @@ html, body {
   color: var(--text);
   font-family: var(--font);
   -webkit-font-smoothing: antialiased;
+  /* Behave like a fixed app screen, not a zoomable web page:
+     kill double-tap zoom, text-select-on-hold, and scroll bounce. */
+  touch-action: manipulation;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 body {
@@ -544,7 +550,7 @@ body {
   border: 1.5px solid var(--line);
   border-radius: 12px;
   padding: 11px 12px;
-  font-size: 15px;
+  font-size: 16px; /* 16px+ stops iOS auto-zooming when a field is tapped */
   font-family: var(--font);
   color: var(--text);
   background: #FAFCFF;

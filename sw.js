@@ -1,5 +1,5 @@
 /* Offline support: cache the app shell, refresh it in the background. */
-const CACHE = "expression-v4";
+const CACHE = "expression-v5";
 const ASSETS = [
   "./",
   "./index.html",
