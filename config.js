@@ -17,3 +17,7 @@ window.EXPRESSION_CONFIG = {
   SUPABASE_URL: "",
   SUPABASE_ANON_KEY: "",
 };
+window.EXPRESSION_CONFIG = {
+  SUPABASE_URL: "https://abcdefgh.supabase.co",
+  SUPABASE_ANON_KEY: "paste-the-key-here",
+};
