@@ -17,3 +17,7 @@ window.EXPRESSION_CONFIG = {
   SUPABASE_URL: "https://lboueyjikfjtycymigtw.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_jy9ovCKRPW-G1B0QjWELuQ_RlE26hwv",
 };
+window.EXPRESSION_CONFIG = {
+  SUPABASE_URL: "https://abcdefgh.supabase.co",
+  SUPABASE_ANON_KEY: "paste-the-key-here",
+};
