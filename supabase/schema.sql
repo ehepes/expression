@@ -61,16 +61,6 @@ create table if not exists week_assignments (
   unique (account, week_start)
 );
 
--- One row per device that has opted in to real push notifications, stored
--- against the person's name so teammates can push to them. See supabase/PUSH.md.
-create table if not exists push_subscriptions (
-  id uuid primary key default gen_random_uuid(),
-  name text not null,
-  endpoint text not null unique,
-  subscription jsonb not null,
-  created_at timestamptz not null default now()
-);
-
 -- The app is shared via a private link with a small trusted team, so the
 -- anon key gets full read/write. Don't post the app link publicly.
 alter table items enable row level security;
@@ -78,14 +68,12 @@ alter table completions enable row level security;
 alter table projects enable row level security;
 alter table members enable row level security;
 alter table week_assignments enable row level security;
-alter table push_subscriptions enable row level security;
 
 create policy "team access" on items for all using (true) with check (true);
 create policy "team access" on completions for all using (true) with check (true);
 create policy "team access" on projects for all using (true) with check (true);
 create policy "team access" on members for all using (true) with check (true);
 create policy "team access" on week_assignments for all using (true) with check (true);
-create policy "team access" on push_subscriptions for all using (true) with check (true);
 
 -- Live updates: when one person changes something, everyone else sees it.
 alter publication supabase_realtime add table items;

@@ -19,12 +19,15 @@ It covers the three branches of the team:
 - **Projects pipeline** — capture ideas, assign them to people, set a
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices
-  where the person has set their name (Settings ⚙) — needs team sync on.
+  where the person has set their name (Settings ⚙) while the app is open or
+  backgrounded — needs team sync on.
 - **Team names & week duty** — names set in Settings ⚙ are saved to the
   shared database, so assigning is a dropdown of real team members. One
   person can be assigned a whole week of posting from the Week tab
-  ("Posting this week"); they're notified when assigned, plus a reminder
-  the first time they open the app each morning of that week.
+  ("Posting this week"). When someone is assigned, and each morning of an
+  assigned week, a notification fires on their device — while the app is
+  open or running in the background (set name + allow notifications in
+  Settings ⚙, team sync on).
 - **Teams view** — each branch's weekly progress and task list at a glance.
 - **Accounts** — separate content plans for Main Church, YA, YTH and HER,
   switchable from the dropdown under the header.
@@ -70,13 +73,10 @@ calendar with live updates:
 [`supabase/upgrade-team.sql`](supabase/upgrade-team.sql) once in the SQL
 Editor the same way — the app shows a banner until this is done.
 
-## 2b. Turn on real push notifications (optional, ~15 minutes)
-
-By default, notifications appear while the app is open. To make them arrive
-**even when the app is fully closed** — assignment alerts and a morning
-reminder for whoever is on posting duty — follow
-[`supabase/PUSH.md`](supabase/PUSH.md). It runs on the same free Supabase
-project (Edge Function + a daily scheduled job).
+> **Notifications** appear while the app is open or running in the
+> background (each person sets their name and taps *Allow notifications* in
+> Settings ⚙). They don't wake a fully-closed phone — that needs a small
+> server add-on which isn't set up here.
 
 ## 3. Install it like an app on your phone
 
@@ -108,15 +108,11 @@ index.html               app shell
 styles.css               styling (Expectation Church brand)
 app.js                   UI logic
 store.js                 data layer (Supabase or localStorage)
-config.js                Supabase keys + push public key
-sw.js                    offline support + push handler (service worker)
+config.js                Supabase keys
+sw.js                    offline support (service worker)
 manifest.webmanifest     install-as-app metadata
 supabase/schema.sql      full database setup + starter data (fresh projects)
 supabase/upgrade-team.sql  add team names + week duty to an existing project
-supabase/push-setup.sql  push notifications: database table
-supabase/push-cron.sql   push notifications: daily morning-reminder schedule
-supabase/functions/push  push notifications: the Edge Function that sends them
-supabase/PUSH.md         step-by-step push setup guide
 assets/logo.jpg          original Expectation Church logo
 tools/make-icons.mjs     regenerates icons/header mark from the logo
 ```

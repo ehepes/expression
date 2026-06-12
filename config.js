@@ -16,9 +16,4 @@
 window.EXPRESSION_CONFIG = {
   SUPABASE_URL: "https://lboueyjikfjtycymigtw.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_jy9ovCKRPW-G1B0QjWELuQ_RlE26hwv",
-
-  // Real push notifications (fire even when the app is closed). Safe to
-  // ship — this is the *public* half of the key pair. The matching private
-  // key lives only in Supabase as a secret. Setup steps: supabase/PUSH.md.
-  VAPID_PUBLIC_KEY: "BJOIlFaAfkCtLlvGRetC3QVW9oj4-beXZjrc0A3sos_xDftMdLgBJILIPt6rVgfktWo-FyGbDr9MGGh6HN_DdLQ",
 };
