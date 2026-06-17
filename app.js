@@ -242,6 +242,7 @@ function chipsHtml() {
 
 function taskRowHtml(it, dateStr) {
   const done = Store.isDone(it.id, dateStr);
+  const isToday = dateStr === ymd(new Date());
   const b = BRANCHES[it.branch] || BRANCHES.social;
   const rep = repeatLabel(it);
   const meta = [
@@ -251,13 +252,19 @@ function taskRowHtml(it, dateStr) {
   ]
     .filter(Boolean)
     .join("");
+  const notesPreview = it.notes ? `<div class="task-preview">${esc(it.notes)}</div>` : "";
+  const assetLink = it.asset_url
+    ? `<a class="task-asset" href="${esc(it.asset_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open asset link">&#128279;</a>`
+    : "";
   return `
-    <div class="task ${done ? "done-row" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${dateStr}">
+    <div class="task ${done ? "done-row" : ""}${isToday ? " today-task" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${dateStr}">
       <button class="checkbox ${done ? "done" : ""}" data-action="toggle-done" data-id="${it.id}" data-date="${dateStr}" aria-label="Mark done">&#10003;</button>
       <div class="task-main">
         <div class="task-title">${esc(it.title)}</div>
         <div class="task-meta">${meta}</div>
+        ${notesPreview}
       </div>
+      ${assetLink}
     </div>`;
 }
 
@@ -514,6 +521,10 @@ function openItemModal(opts) {
           <textarea name="notes" maxlength="2000" placeholder="Caption ideas, links, details… (optional)">${esc(it.notes)}</textarea>
         </div>
         <div class="field">
+          <label>Asset / Drive link</label>
+          <input type="text" name="asset_url" maxlength="500" value="${esc(it.asset_url || '')}" placeholder="Drive folder, Canva link… (optional)" />
+        </div>
+        <div class="field">
           <label>When</label>
           <div class="radio-row">
             <label><input type="radio" name="schedule" value="once" ${schedule === "once" ? "checked" : ""}/> One date</label>
@@ -575,6 +586,7 @@ function openItemModal(opts) {
       branch: form.branch.value,
       assignee: readAssignee(form),
       notes: form.notes.value.trim(),
+      asset_url: form.asset_url.value.trim(),
       recurring: s !== "once",
       recur: s === "monthly" ? "monthly" : "weekly",
       dow: s === "once" ? null : Number(form.dow.value),
@@ -1024,6 +1036,7 @@ document.addEventListener("click", (e) => {
       break;
     case "edit-item":
       if (e.target.closest('[data-action="toggle-done"]')) break;
+      if (e.target.closest('.task-asset')) break;
       openItemModal({ id: el.dataset.id, date: el.dataset.date });
       break;
     case "add-project":

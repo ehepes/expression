@@ -221,6 +221,8 @@ window.Store = (() => {
   // ----- items -----
   function itemRow(it) {
     const recurring = !!it.recurring;
+    let asset_url = (it.asset_url || "").trim();
+    if (asset_url && !/^https?:\/\//i.test(asset_url)) asset_url = "https://" + asset_url;
     return {
       id: it.id,
       account: it.account || "main",
@@ -228,6 +230,7 @@ window.Store = (() => {
       notes: it.notes || "",
       branch: it.branch,
       assignee: it.assignee || "",
+      asset_url,
       recurring,
       recur: recurring ? it.recur || "weekly" : null,
       dow: recurring ? it.dow : null,

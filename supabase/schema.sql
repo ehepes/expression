@@ -12,6 +12,7 @@ create table if not exists items (
   notes text not null default '',
   branch text not null default 'social', -- social | media | editing
   assignee text not null default '',
+  asset_url text not null default '',
   recurring boolean not null default false,
   recur text check (recur in ('weekly', 'monthly')),
   dow int check (dow between 0 and 6),
