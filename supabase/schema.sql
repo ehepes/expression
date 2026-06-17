@@ -87,6 +87,7 @@ create table if not exists requests (
   title text not null,
   details text not null default '',
   requested_by text not null default '',
+  due_date date, -- "required by"
   status text not null default 'pending', -- pending | approved | declined
   created_at timestamptz not null default now()
 );

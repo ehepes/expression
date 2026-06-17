@@ -466,6 +466,7 @@ window.Store = (() => {
       title: r.title,
       details: r.details || "",
       requested_by: r.requested_by || "",
+      due_date: r.due_date || null, // "required by"
       status: r.status || "pending", // pending | approved | declined
     };
   }

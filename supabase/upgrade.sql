@@ -47,9 +47,12 @@ create table if not exists requests (
   title text not null,
   details text not null default '',
   requested_by text not null default '',
+  due_date date,
   status text not null default 'pending',
   created_at timestamptz not null default now()
 );
+-- If the requests table already existed without it, add the date column.
+alter table requests add column if not exists due_date date;
 
 alter table members enable row level security;
 alter table week_assignments enable row level security;

@@ -873,86 +873,78 @@ function openLinkModal(id) {
 }
 
 // ----- requests -----
-const REQUEST_STATUS = { pending: "Pending", approved: "Approved", declined: "Declined" };
-
+// The tab only shows requests still awaiting approval. Approving one moves it
+// into Projects; declining removes it. So the tab stays clean.
 function renderRequests() {
-  const all = Store.get().requests;
-  const pending = all.filter((r) => (r.status || "pending") === "pending");
-  const handled = all.filter((r) => (r.status || "pending") !== "pending");
+  const pending = Store.get().requests.filter((r) => (r.status || "pending") === "pending");
 
-  const card = (r) => {
-    const acct = ACCOUNTS[r.account || "main"] || "Main Church";
-    const isPending = (r.status || "pending") === "pending";
-    return `
-      <div class="request-card ${isPending ? "" : "muted"}">
+  const cards = pending
+    .map((r) => {
+      const acct = ACCOUNTS[r.account || "main"] || "Main Church";
+      return `
+      <div class="request-card">
         <div class="request-top">
           <div class="request-title">${esc(r.title)}</div>
-          <span class="status-chip" style="background:${
-            r.status === "approved" ? STATUS_COLORS.ready : r.status === "declined" ? "#FFE9EF;color:#D03A6B" : "#EAF1FF;color:#1E5BD6"
-          }">${REQUEST_STATUS[r.status] || "Pending"}</span>
+          <span class="status-chip" style="background:#FFF1DF;color:#C26A00">Awaiting approval</span>
         </div>
         ${r.details ? `<div class="request-notes">${esc(r.details)}</div>` : ""}
         <div class="request-meta">
           <span>&#127991; ${esc(acct)}</span>
           ${r.requested_by ? `<span>&#128100; ${esc(r.requested_by)}</span>` : ""}
+          ${r.due_date ? `<span>&#128197; required by ${esc(r.due_date)}</span>` : ""}
         </div>
-        ${
-          isPending
-            ? `<div class="request-actions">
-                 <button class="advance-btn" data-action="approve-request" data-id="${r.id}">Approve &amp; add to projects &#8594;</button>
-                 <button class="ghost-btn small" data-action="decline-request" data-id="${r.id}">Decline</button>
-               </div>`
-            : `<div class="request-actions"><button class="ghost-btn small" data-action="delete-request" data-id="${r.id}">Remove</button></div>`
-        }
+        <div class="request-actions">
+          <button class="advance-btn" data-action="approve-request" data-id="${r.id}">Approve &#8594; move to Projects</button>
+          <button class="ghost-btn small" data-action="decline-request" data-id="${r.id}">Decline</button>
+        </div>
       </div>`;
-  };
-
-  let body = "";
-  body += pending.length
-    ? `<div class="section-title">To review · ${pending.length}</div>` + pending.map(card).join("")
-    : '<div class="empty-state">No requests waiting.<br/>Other teams can tap <b>New request</b> to ask for content.</div>';
-  if (handled.length) {
-    body += `<div class="section-title">Handled · ${handled.length}</div>` + handled.map(card).join("");
-  }
+    })
+    .join("");
 
   return `
     <div class="projects-head">
       <h2>Requests</h2>
       <button class="primary-btn" data-action="add-request">+ New request</button>
     </div>
-    <p class="hint" style="margin:-6px 0 14px">Anyone can request content or a project here. Approve to send it to the Projects pipeline, then assign it.</p>
-    ${body}`;
+    ${
+      pending.length
+        ? `<div class="section-title">Awaiting approval · ${pending.length}</div>${cards}`
+        : '<div class="empty-state">Nothing awaiting approval.<br/>Tap <b>New request</b> to ask for content or a project.</div>'
+    }`;
 }
 
-function openRequestModal(id) {
-  const editing = id ? Store.get().requests.find((r) => r.id === id) : null;
-  const r = editing || { title: "", details: "", requested_by: getPrefs().myName || "", account };
+function openRequestModal() {
+  const r = { title: "", details: "", requested_by: getPrefs().myName || "", account, due_date: "" };
   const acctOpts = Object.entries(ACCOUNTS)
-    .map(([k, name]) => `<option value="${k}" ${ (r.account || "main") === k ? "selected" : ""}>${name}</option>`)
+    .map(([k, name]) => `<option value="${k}" ${(r.account || "main") === k ? "selected" : ""}>${name}</option>`)
     .join("");
   document.getElementById("modal-root").innerHTML = `
     <div class="modal-overlay" data-action="close-modal">
       <form class="modal" id="request-form">
-        <h2>${editing ? "Edit request" : "New request"}</h2>
+        <h2>New request</h2>
         <div class="field">
           <label>What do you need?</label>
           <input type="text" name="title" required maxlength="200" value="${esc(r.title)}" placeholder="e.g. Reel to promote youth weekend" />
         </div>
         <div class="field">
-          <label>Details</label>
-          <textarea name="details" maxlength="2000" placeholder="Dates, key info, who/what, any references…">${esc(r.details)}</textarea>
+          <label>Which account</label>
+          <select name="account">${acctOpts}</select>
+        </div>
+        <div class="field">
+          <label>Required by</label>
+          <input type="date" name="due_date" value="${esc(r.due_date || "")}" />
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <textarea name="details" maxlength="2000" placeholder="Key info, who/what, references, anything that helps…">${esc(r.details)}</textarea>
         </div>
         <div class="field">
           <label>Your name</label>
           <input type="text" name="requested_by" maxlength="80" value="${esc(r.requested_by)}" placeholder="So we know who asked" />
         </div>
-        <div class="field">
-          <label>For which account</label>
-          <select name="account">${acctOpts}</select>
-        </div>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
-          <button type="submit" class="primary-btn">${editing ? "Save" : "Send request"}</button>
+          <button type="submit" class="primary-btn">Send request</button>
         </div>
       </form>
     </div>`;
@@ -964,24 +956,31 @@ function openRequestModal(id) {
       details: form.details.value.trim(),
       requested_by: form.requested_by.value.trim(),
       account: form.account.value,
+      due_date: form.due_date.value || null,
     };
     if (!fields.title) return;
-    if (editing) Store.updateRequest(editing.id, fields);
-    else Store.addRequest(fields);
+    Store.addRequest(fields); // lands as "awaiting approval"
     closeModal();
   });
   form.title.focus();
 }
 
-// Turn a request into a project (unassigned), then mark it approved.
+// Approve = turn the request into a project (unassigned) and remove it from
+// the requests list, so it has "moved" into Projects.
 function approveRequest(id) {
   const r = Store.get().requests.find((x) => x.id === id);
   if (!r) return;
   const notes = [r.details, r.requested_by ? `Requested by ${r.requested_by}` : ""]
     .filter(Boolean)
     .join("\n\n");
-  Store.addProject({ account: r.account || "main", title: r.title, notes, status: "idea" });
-  Store.updateRequest(id, { status: "approved" });
+  Store.addProject({
+    account: r.account || "main",
+    title: r.title,
+    notes,
+    status: "idea",
+    due_date: r.due_date || null,
+  });
+  Store.deleteRequest(id);
 }
 
 // ----- events -----
@@ -1090,10 +1089,7 @@ document.addEventListener("click", (e) => {
       approveRequest(el.dataset.id);
       break;
     case "decline-request":
-      if (confirm("Decline this request?")) Store.updateRequest(el.dataset.id, { status: "declined" });
-      break;
-    case "delete-request":
-      if (confirm("Remove this request?")) Store.deleteRequest(el.dataset.id);
+      if (confirm("Decline and remove this request?")) Store.deleteRequest(el.dataset.id);
       break;
     case "settings":
       openSettingsModal();
