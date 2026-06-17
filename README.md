@@ -14,8 +14,9 @@ It covers the three branches of the team:
 - **Week view** — see everything that needs to happen each day of the week,
   tick items off as they're done, flip between weeks, or tap the date range
   to jump straight to any week or month. Posts can be one-off, weekly, or
-  monthly (e.g. "3rd Wednesday"). Recurring posts can be edited "from this
-  week onward" without changing past weeks.
+  monthly (e.g. "3rd Wednesday"). When editing a recurring post you choose
+  the scope: **just this week**, **this week and all future weeks**, or
+  **every week** — so one-off tweaks never disturb the standing schedule.
 - **Projects pipeline** — capture ideas, assign them to people, set a
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices
@@ -28,6 +29,11 @@ It covers the three branches of the team:
   assigned week, a notification fires on their device — while the app is
   open or running in the background (set name + allow notifications in
   Settings ⚙, team sync on).
+- **Requests inbox** — other teams tap **New request** to ask for content;
+  pending requests show a count on the tab. Approve one to drop it straight
+  into the Projects pipeline (then assign it), or decline it.
+- **Quick links** — a 🔗 button by the header opens shared links (Google
+  Drive, Canva, folders…) that the whole team can add and edit.
 - **Teams view** — each branch's weekly progress and task list at a glance.
 - **Accounts** — separate content plans for Main Church, YA, YTH and HER,
   switchable from the dropdown under the header.
@@ -69,9 +75,10 @@ calendar with live updates:
 > The anon key is safe to put in the app, but the app link then acts like a
 > shared team notebook — share it with the team only, don't post it publicly.
 
-**Already set up sync before team names / week assignments existed?** Run
-[`supabase/upgrade-team.sql`](supabase/upgrade-team.sql) once in the SQL
-Editor the same way — the app shows a banner until this is done.
+**Already had sync running before a newer feature was added?** Run
+[`supabase/upgrade.sql`](supabase/upgrade.sql) once in the SQL Editor the
+same way — it safely adds anything missing (team names, week duty,
+single-week edits, links, requests). The app shows a banner until it's done.
 
 > **Notifications** appear while the app is open or running in the
 > background (each person sets their name and taps *Allow notifications* in
@@ -112,7 +119,7 @@ config.js                Supabase keys
 sw.js                    offline support (service worker)
 manifest.webmanifest     install-as-app metadata
 supabase/schema.sql      full database setup + starter data (fresh projects)
-supabase/upgrade-team.sql  add team names + week duty to an existing project
+supabase/upgrade.sql     add newer features to an already-running project
 assets/logo.jpg          original Expectation Church logo
 tools/make-icons.mjs     regenerates icons/header mark from the logo
 ```

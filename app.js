@@ -48,7 +48,7 @@ function setPrefs(patch) {
 }
 
 // ----- app state -----
-let tab = ["week", "projects", "teams"].includes(location.hash.slice(1))
+let tab = ["week", "projects", "requests", "teams"].includes(location.hash.slice(1))
   ? location.hash.slice(1)
   : "week";
 let branchFilter = "all";
@@ -94,6 +94,8 @@ function esc(s) {
 // Whether a (possibly recurring) item appears on a given date.
 function showsOn(it, date, dateStr) {
   if (!it.recurring) return it.date === dateStr;
+  // A one-week override/skip hides the recurring item on that single date.
+  if (Store.isException(it.id, dateStr)) return false;
   if (it.start_date && dateStr < it.start_date) return false;
   if (it.end_date && dateStr > it.end_date) return false;
   if (it.dow !== (date.getDay() + 6) % 7) return false;
@@ -153,10 +155,30 @@ function render() {
   document.querySelectorAll(".tab").forEach((b) => {
     b.classList.toggle("active", b.dataset.tab === tab);
   });
+  renderRequestsBadge();
   const view = document.getElementById("view");
   if (tab === "week") view.innerHTML = renderWeek();
   else if (tab === "projects") view.innerHTML = renderProjects();
+  else if (tab === "requests") view.innerHTML = renderRequests();
   else view.innerHTML = renderTeams();
+}
+
+// Little count bubble on the Requests tab when there are pending requests.
+function renderRequestsBadge() {
+  const tabBtn = document.querySelector('.tab[data-tab="requests"]');
+  if (!tabBtn) return;
+  const pending = Store.get().requests.filter((r) => (r.status || "pending") === "pending").length;
+  let dot = tabBtn.querySelector(".tab-badge");
+  if (pending) {
+    if (!dot) {
+      dot = document.createElement("span");
+      dot.className = "tab-badge";
+      tabBtn.appendChild(dot);
+    }
+    dot.textContent = pending > 9 ? "9+" : String(pending);
+  } else if (dot) {
+    dot.remove();
+  }
 }
 
 function renderSyncBadge() {
@@ -182,7 +204,7 @@ function renderBanner() {
       "<b>Couldn’t reach the team database.</b> Working from this device for now — check the keys in config.js or your connection, then reload.";
   } else if (Store.needsUpgrade()) {
     el.innerHTML =
-      "<b>Database upgrade needed:</b> to save team names and week assignments, run <b>supabase/upgrade-team.sql</b> in the Supabase SQL Editor (it’s in the project files), then reload.";
+      "<b>Database upgrade needed:</b> to enable team names, week duty, single-week edits, links and requests, run <b>supabase/upgrade.sql</b> in the Supabase SQL Editor (it’s in the project files), then reload.";
   } else {
     el.innerHTML = "";
   }
@@ -506,18 +528,22 @@ function openItemModal(opts) {
         </div>
         ${
           editing && editing.recurring
-            ? `<div class="field future-only">
-                 <label class="check-label"><input type="checkbox" name="futureOnly" />
-                 Apply changes from this week onward only (past weeks stay as they were)</label>
+            ? `<div class="field scope-field">
+                 <label>Apply this change to</label>
+                 <div class="radio-col">
+                   <label><input type="radio" name="scope" value="one" checked /> <span><b>Just this week</b> — other weeks stay the same</span></label>
+                   <label><input type="radio" name="scope" value="future" /> <span><b>This week and all future weeks</b> — past weeks unchanged</span></label>
+                   <label><input type="radio" name="scope" value="all" /> <span><b>Every week</b> — change the standing schedule</span></label>
+                 </div>
                </div>`
             : ""
         }
         <div class="modal-actions">
           ${
             editing
-              ? `<button type="button" class="danger-btn" data-action="delete-item" data-id="${editing.id}">Delete</button>` +
+              ? `<button type="button" class="danger-btn" data-action="delete-item" data-id="${editing.id}" data-date="${esc(opts.date || "")}">Delete</button>` +
                 (editing.recurring
-                  ? `<button type="button" class="ghost-btn" data-action="stop-item" data-id="${editing.id}" title="Keeps past weeks, removes it from this week on">Stop from this week</button>`
+                  ? `<button type="button" class="ghost-btn" data-action="stop-item" data-id="${editing.id}" title="Keeps past weeks, removes it from this week onward">Stop future weeks</button>`
                   : "")
               : ""
           }
@@ -557,8 +583,22 @@ function openItemModal(opts) {
     };
     if (!fields.title) return;
     if (editing) {
-      const futureOnly = form.futureOnly && form.futureOnly.checked && editing.recurring && fields.recurring;
-      if (futureOnly) {
+      // Scope only applies when an existing recurring item stays recurring.
+      const scope = form.scope && editing.recurring && fields.recurring ? form.scope.value : "all";
+      if (scope === "one") {
+        // Override just this occurrence: hide the original on that date and
+        // drop a one-off copy carrying the edited details.
+        const target = occurrenceDate(editing, opts.date);
+        Store.addException(editing.id, target);
+        Store.addItem(
+          Object.assign({}, fields, {
+            recurring: false,
+            date: target,
+            start_date: null,
+            end_date: null,
+          })
+        );
+      } else if (scope === "future") {
         // Split: the old item ends before this week, a new one starts here.
         const boundary = ymd(weekStart);
         Store.updateItem(editing.id, { end_date: ymd(addDays(weekStart, -1)) });
@@ -572,6 +612,13 @@ function openItemModal(opts) {
     closeModal();
   });
   form.title.focus();
+}
+
+// The specific date a recurring item is being edited on — the tapped date if
+// we have it, otherwise that item's day within the currently shown week.
+function occurrenceDate(it, dateStr) {
+  if (dateStr) return dateStr;
+  return ymd(addDays(weekStart, it.dow ?? 0));
 }
 
 function openProjectModal(id) {
@@ -759,6 +806,184 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible") morningReminder();
 });
 
+// ----- quick links -----
+function openLinksModal() {
+  const links = Store.get().links;
+  const rows = links.length
+    ? links
+        .map(
+          (l) => `
+        <div class="link-row">
+          <a class="link-main" href="${esc(l.url)}" target="_blank" rel="noopener noreferrer">
+            <span class="link-label">${esc(l.label || l.url)}</span>
+            <span class="link-url">${esc(l.url)}</span>
+          </a>
+          <button class="icon-btn" data-action="edit-link" data-id="${l.id}" aria-label="Edit link">&#9998;</button>
+          <button class="icon-btn" data-action="delete-link" data-id="${l.id}" aria-label="Delete link">&#128465;</button>
+        </div>`
+        )
+        .join("")
+    : '<div class="day-empty">No links yet — add Drive folders, Canva, schedules…</div>';
+  document.getElementById("modal-root").innerHTML = `
+    <div class="modal-overlay" data-action="close-modal">
+      <div class="modal" id="links-modal">
+        <h2>Quick links</h2>
+        <p class="hint" style="margin-top:-8px">Shared with the whole team — Google Drive, Canva, folders and more.</p>
+        <div class="link-list">${rows}</div>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-action="close-modal">Close</button>
+          <button type="button" class="primary-btn" data-action="add-link">+ Add link</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function openLinkModal(id) {
+  const editing = id ? Store.get().links.find((l) => l.id === id) : null;
+  const l = editing || { label: "", url: "" };
+  document.getElementById("modal-root").innerHTML = `
+    <div class="modal-overlay" data-action="close-modal">
+      <form class="modal" id="link-form">
+        <h2>${editing ? "Edit link" : "Add link"}</h2>
+        <div class="field">
+          <label>Name</label>
+          <input type="text" name="label" required maxlength="80" value="${esc(l.label)}" placeholder="e.g. Reels Drive folder" />
+        </div>
+        <div class="field">
+          <label>Link (URL)</label>
+          <input type="text" name="url" required maxlength="500" value="${esc(l.url)}" placeholder="paste the link here" />
+        </div>
+        <div class="modal-actions">
+          ${editing ? `<button type="button" class="danger-btn" data-action="delete-link" data-id="${editing.id}">Delete</button>` : ""}
+          <button type="button" class="ghost-btn" data-action="open-links">Cancel</button>
+          <button type="submit" class="primary-btn">${editing ? "Save" : "Add"}</button>
+        </div>
+      </form>
+    </div>`;
+  const form = document.getElementById("link-form");
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const fields = { label: form.label.value.trim(), url: form.url.value.trim() };
+    if (!fields.label || !fields.url) return;
+    if (editing) Store.updateLink(editing.id, fields);
+    else Store.addLink(fields);
+    openLinksModal();
+  });
+  form.label.focus();
+}
+
+// ----- requests -----
+const REQUEST_STATUS = { pending: "Pending", approved: "Approved", declined: "Declined" };
+
+function renderRequests() {
+  const all = Store.get().requests;
+  const pending = all.filter((r) => (r.status || "pending") === "pending");
+  const handled = all.filter((r) => (r.status || "pending") !== "pending");
+
+  const card = (r) => {
+    const acct = ACCOUNTS[r.account || "main"] || "Main Church";
+    const isPending = (r.status || "pending") === "pending";
+    return `
+      <div class="request-card ${isPending ? "" : "muted"}">
+        <div class="request-top">
+          <div class="request-title">${esc(r.title)}</div>
+          <span class="status-chip" style="background:${
+            r.status === "approved" ? STATUS_COLORS.ready : r.status === "declined" ? "#FFE9EF;color:#D03A6B" : "#EAF1FF;color:#1E5BD6"
+          }">${REQUEST_STATUS[r.status] || "Pending"}</span>
+        </div>
+        ${r.details ? `<div class="request-notes">${esc(r.details)}</div>` : ""}
+        <div class="request-meta">
+          <span>&#127991; ${esc(acct)}</span>
+          ${r.requested_by ? `<span>&#128100; ${esc(r.requested_by)}</span>` : ""}
+        </div>
+        ${
+          isPending
+            ? `<div class="request-actions">
+                 <button class="advance-btn" data-action="approve-request" data-id="${r.id}">Approve &amp; add to projects &#8594;</button>
+                 <button class="ghost-btn small" data-action="decline-request" data-id="${r.id}">Decline</button>
+               </div>`
+            : `<div class="request-actions"><button class="ghost-btn small" data-action="delete-request" data-id="${r.id}">Remove</button></div>`
+        }
+      </div>`;
+  };
+
+  let body = "";
+  body += pending.length
+    ? `<div class="section-title">To review · ${pending.length}</div>` + pending.map(card).join("")
+    : '<div class="empty-state">No requests waiting.<br/>Other teams can tap <b>New request</b> to ask for content.</div>';
+  if (handled.length) {
+    body += `<div class="section-title">Handled · ${handled.length}</div>` + handled.map(card).join("");
+  }
+
+  return `
+    <div class="projects-head">
+      <h2>Requests</h2>
+      <button class="primary-btn" data-action="add-request">+ New request</button>
+    </div>
+    <p class="hint" style="margin:-6px 0 14px">Anyone can request content or a project here. Approve to send it to the Projects pipeline, then assign it.</p>
+    ${body}`;
+}
+
+function openRequestModal(id) {
+  const editing = id ? Store.get().requests.find((r) => r.id === id) : null;
+  const r = editing || { title: "", details: "", requested_by: getPrefs().myName || "", account };
+  const acctOpts = Object.entries(ACCOUNTS)
+    .map(([k, name]) => `<option value="${k}" ${ (r.account || "main") === k ? "selected" : ""}>${name}</option>`)
+    .join("");
+  document.getElementById("modal-root").innerHTML = `
+    <div class="modal-overlay" data-action="close-modal">
+      <form class="modal" id="request-form">
+        <h2>${editing ? "Edit request" : "New request"}</h2>
+        <div class="field">
+          <label>What do you need?</label>
+          <input type="text" name="title" required maxlength="200" value="${esc(r.title)}" placeholder="e.g. Reel to promote youth weekend" />
+        </div>
+        <div class="field">
+          <label>Details</label>
+          <textarea name="details" maxlength="2000" placeholder="Dates, key info, who/what, any references…">${esc(r.details)}</textarea>
+        </div>
+        <div class="field">
+          <label>Your name</label>
+          <input type="text" name="requested_by" maxlength="80" value="${esc(r.requested_by)}" placeholder="So we know who asked" />
+        </div>
+        <div class="field">
+          <label>For which account</label>
+          <select name="account">${acctOpts}</select>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
+          <button type="submit" class="primary-btn">${editing ? "Save" : "Send request"}</button>
+        </div>
+      </form>
+    </div>`;
+  const form = document.getElementById("request-form");
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const fields = {
+      title: form.title.value.trim(),
+      details: form.details.value.trim(),
+      requested_by: form.requested_by.value.trim(),
+      account: form.account.value,
+    };
+    if (!fields.title) return;
+    if (editing) Store.updateRequest(editing.id, fields);
+    else Store.addRequest(fields);
+    closeModal();
+  });
+  form.title.focus();
+}
+
+// Turn a request into a project (unassigned), then mark it approved.
+function approveRequest(id) {
+  const r = Store.get().requests.find((x) => x.id === id);
+  if (!r) return;
+  const notes = [r.details, r.requested_by ? `Requested by ${r.requested_by}` : ""]
+    .filter(Boolean)
+    .join("\n\n");
+  Store.addProject({ account: r.account || "main", title: r.title, notes, status: "idea" });
+  Store.updateRequest(id, { status: "approved" });
+}
+
 // ----- events -----
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-action]");
@@ -841,6 +1066,34 @@ document.addEventListener("click", (e) => {
     case "unassign-week":
       Store.setWeekAssignment(account, ymd(weekStart), "");
       closeModal();
+      break;
+    case "links":
+    case "open-links":
+      openLinksModal();
+      break;
+    case "add-link":
+      openLinkModal();
+      break;
+    case "edit-link":
+      openLinkModal(el.dataset.id);
+      break;
+    case "delete-link":
+      if (confirm("Delete this link?")) {
+        Store.deleteLink(el.dataset.id);
+        openLinksModal();
+      }
+      break;
+    case "add-request":
+      openRequestModal();
+      break;
+    case "approve-request":
+      approveRequest(el.dataset.id);
+      break;
+    case "decline-request":
+      if (confirm("Decline this request?")) Store.updateRequest(el.dataset.id, { status: "declined" });
+      break;
+    case "delete-request":
+      if (confirm("Remove this request?")) Store.deleteRequest(el.dataset.id);
       break;
     case "settings":
       openSettingsModal();

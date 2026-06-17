@@ -61,6 +61,36 @@ create table if not exists week_assignments (
   unique (account, week_start)
 );
 
+-- A recurring item overridden/skipped on a single date, so an edit can apply
+-- to just one week without changing the standing schedule.
+create table if not exists item_exceptions (
+  id uuid primary key default gen_random_uuid(),
+  item_id uuid not null references items(id) on delete cascade,
+  date date not null,
+  created_at timestamptz not null default now(),
+  unique (item_id, date)
+);
+
+-- Shared quick links (Google Drive, Canva, folders…).
+create table if not exists links (
+  id uuid primary key default gen_random_uuid(),
+  label text not null,
+  url text not null,
+  sort int not null default 0,
+  created_at timestamptz not null default now()
+);
+
+-- Content/project requests from other teams, to review and turn into projects.
+create table if not exists requests (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  title text not null,
+  details text not null default '',
+  requested_by text not null default '',
+  status text not null default 'pending', -- pending | approved | declined
+  created_at timestamptz not null default now()
+);
+
 -- The app is shared via a private link with a small trusted team, so the
 -- anon key gets full read/write. Don't post the app link publicly.
 alter table items enable row level security;
@@ -68,12 +98,18 @@ alter table completions enable row level security;
 alter table projects enable row level security;
 alter table members enable row level security;
 alter table week_assignments enable row level security;
+alter table item_exceptions enable row level security;
+alter table links enable row level security;
+alter table requests enable row level security;
 
 create policy "team access" on items for all using (true) with check (true);
 create policy "team access" on completions for all using (true) with check (true);
 create policy "team access" on projects for all using (true) with check (true);
 create policy "team access" on members for all using (true) with check (true);
 create policy "team access" on week_assignments for all using (true) with check (true);
+create policy "team access" on item_exceptions for all using (true) with check (true);
+create policy "team access" on links for all using (true) with check (true);
+create policy "team access" on requests for all using (true) with check (true);
 
 -- Live updates: when one person changes something, everyone else sees it.
 alter publication supabase_realtime add table items;
@@ -81,6 +117,9 @@ alter publication supabase_realtime add table completions;
 alter publication supabase_realtime add table projects;
 alter publication supabase_realtime add table members;
 alter publication supabase_realtime add table week_assignments;
+alter publication supabase_realtime add table item_exceptions;
+alter publication supabase_realtime add table links;
+alter publication supabase_realtime add table requests;
 
 -- ---------------------------------------------------------------
 -- Main Church standard weekly Instagram schedule (from the team's

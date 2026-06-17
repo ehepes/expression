@@ -17,11 +17,25 @@
  *                "required by" date, per account.
  *  members:      team member names (populate assignment dropdowns).
  *  week_assignments: who is on posting duty for a week, per account.
+ *  item_exceptions: dates a recurring item is overridden/skipped, so an
+ *                edit can apply to just one week.
+ *  links:        shared quick links (Google Drive, Canva, …).
+ *  requests:     content/project requests from other teams, to review and
+ *                turn into projects.
  */
 window.Store = (() => {
   const LS_KEY = "expression-data-v2";
 
-  const EMPTY = { items: [], completions: [], projects: [], members: [], week_assignments: [] };
+  const EMPTY = {
+    items: [],
+    completions: [],
+    projects: [],
+    members: [],
+    week_assignments: [],
+    item_exceptions: [],
+    links: [],
+    requests: [],
+  };
 
   let mode = "local"; // "local" | "remote" | "local-error"
   let sb = null;
@@ -78,6 +92,9 @@ window.Store = (() => {
     return {
       members: [],
       week_assignments: [],
+      item_exceptions: [],
+      links: [],
+      requests: [],
       items: [
         // Monday
         w(0, "Story Recap", "Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00"),
@@ -124,24 +141,37 @@ window.Store = (() => {
 
   // ----- remote (Supabase) -----
   async function fetchAll() {
-    const [items, completions, projects, members, weekAssignments] = await Promise.all([
-      sb.from("items").select("*").order("created_at"),
-      sb.from("completions").select("*"),
-      sb.from("projects").select("*").order("created_at"),
-      sb.from("members").select("*").order("name"),
-      sb.from("week_assignments").select("*"),
-    ]);
+    const [items, completions, projects, members, weekAssignments, exceptions, links, requests] =
+      await Promise.all([
+        sb.from("items").select("*").order("created_at"),
+        sb.from("completions").select("*"),
+        sb.from("projects").select("*").order("created_at"),
+        sb.from("members").select("*").order("name"),
+        sb.from("week_assignments").select("*"),
+        sb.from("item_exceptions").select("*"),
+        sb.from("links").select("*").order("sort").order("created_at"),
+        sb.from("requests").select("*").order("created_at"),
+      ]);
     const err = items.error || completions.error || projects.error;
     if (err) throw err;
-    // members/week_assignments arrived in a later upgrade; if those tables
-    // don't exist yet the rest of the app must keep working.
-    upgradeNeeded = !!(members.error || weekAssignments.error);
+    // members + later tables arrived in upgrades; if any don't exist yet the
+    // rest of the app must keep working, and we flag that an upgrade is due.
+    upgradeNeeded = !!(
+      members.error ||
+      weekAssignments.error ||
+      exceptions.error ||
+      links.error ||
+      requests.error
+    );
     state = {
       items: items.data,
       completions: completions.data,
       projects: projects.data,
       members: members.error ? [] : members.data,
       week_assignments: weekAssignments.error ? [] : weekAssignments.data,
+      item_exceptions: exceptions.error ? [] : exceptions.data,
+      links: links.error ? [] : links.data,
+      requests: requests.error ? [] : requests.data,
     };
   }
 
@@ -360,6 +390,123 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- item exceptions (override/skip a recurring item on one date) -----
+  function isException(itemId, date) {
+    return state.item_exceptions.some((x) => x.item_id === itemId && x.date === date);
+  }
+
+  async function addException(itemId, date) {
+    if (isException(itemId, date)) return;
+    if (sb) {
+      const { error } = await sb
+        .from("item_exceptions")
+        .upsert({ id: uid(), item_id: itemId, date }, { onConflict: "item_id,date", ignoreDuplicates: true });
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.item_exceptions.push({ id: uid(), item_id: itemId, date });
+    saveLocal();
+    emit();
+  }
+
+  // ----- links (shared quick links) -----
+  function linkRow(r) {
+    let url = (r.url || "").trim();
+    if (url && !/^https?:\/\//i.test(url)) url = "https://" + url;
+    return {
+      id: r.id,
+      label: (r.label || "").trim(),
+      url,
+      sort: Number.isFinite(r.sort) ? r.sort : 0,
+    };
+  }
+
+  async function addLink(fields) {
+    const r = linkRow(Object.assign({ id: uid(), sort: state.links.length }, fields));
+    if (sb) {
+      const { error } = await sb.from("links").insert(r);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.links.push(r);
+    saveLocal();
+    emit();
+  }
+
+  async function updateLink(id, fields) {
+    const current = state.links.find((r) => r.id === id);
+    if (!current) return;
+    const next = linkRow(Object.assign({}, current, fields, { id }));
+    if (sb) {
+      const { error } = await sb.from("links").update(next).eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    Object.assign(current, next);
+    saveLocal();
+    emit();
+  }
+
+  async function deleteLink(id) {
+    if (sb) {
+      const { error } = await sb.from("links").delete().eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.links = state.links.filter((r) => r.id !== id);
+    saveLocal();
+    emit();
+  }
+
+  // ----- requests (content/project requests to review) -----
+  function requestRow(r) {
+    return {
+      id: r.id,
+      account: r.account || "main",
+      title: r.title,
+      details: r.details || "",
+      requested_by: r.requested_by || "",
+      status: r.status || "pending", // pending | approved | declined
+    };
+  }
+
+  async function addRequest(fields) {
+    const r = requestRow(Object.assign({ id: uid() }, fields));
+    if (sb) {
+      const { error } = await sb.from("requests").insert(r);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.requests.push(r);
+    saveLocal();
+    emit();
+  }
+
+  async function updateRequest(id, fields) {
+    const current = state.requests.find((r) => r.id === id);
+    if (!current) return;
+    const next = requestRow(Object.assign({}, current, fields, { id }));
+    if (sb) {
+      const { error } = await sb.from("requests").update(next).eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    Object.assign(current, next);
+    saveLocal();
+    emit();
+  }
+
+  async function deleteRequest(id) {
+    if (sb) {
+      const { error } = await sb.from("requests").delete().eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.requests = state.requests.filter((r) => r.id !== id);
+    saveLocal();
+    emit();
+  }
+
   return {
     init,
     onChange,
@@ -376,5 +523,13 @@ window.Store = (() => {
     deleteProject,
     addMember,
     setWeekAssignment,
+    isException,
+    addException,
+    addLink,
+    updateLink,
+    deleteLink,
+    addRequest,
+    updateRequest,
+    deleteRequest,
   };
 })();
