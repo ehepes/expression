@@ -479,14 +479,17 @@ body {
   line-height: 1.5;
 }
 
-.empty-state .redirect-title {
-  font-size: 15px;
+/* Account chip on "Assigned to you" project rows */
+.acct-tag {
+  display: inline-block;
+  font-size: 11px;
   font-weight: 800;
-  color: var(--text);
-  margin-bottom: 6px;
+  letter-spacing: 0.02em;
+  color: var(--blue);
+  background: #EAF1FF;
+  padding: 1px 7px;
+  border-radius: 999px;
 }
-
-.empty-state .redirect-cta { margin-top: 16px; }
 
 /* Weekly-checklist "add task" button */
 .list-add {

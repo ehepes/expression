@@ -6,8 +6,9 @@ It covers the three branches of the team:
 | Branch | What it does in the app |
 |---|---|
 | **Social Media Team** | Weekly Instagram posting calendar with daily check-offs |
-| **Photo & Media Team** | Photography / filming tasks on the same calendar |
-| **Editing Team** | YouTube & Spotify tasks (uploads, podcast cuts) |
+| **Photo & Media Team** | Weekly checklist — standing or one-off shoot tasks |
+| **Editing Team** | Weekly checklist — YouTube & Spotify tasks |
+| **Graphics Team** | Weekly checklist — design tasks; also receives Projects |
 
 **Features**
 
@@ -16,11 +17,13 @@ It covers the three branches of the team:
     or tap the date range to jump to any week. Posts can be one-off, weekly, or
     monthly (e.g. "3rd Wednesday"); when editing a recurring post you choose the
     scope (**just this week**, **future weeks**, or **every week**).
-  - **Media** & **Editing** — a weekly standing checklist (not daily). Set the
-    list once; it appears every week and is ticked off once per week. Editing
+  - **Media**, **Editing** & **Graphics** — a weekly checklist (not daily).
+    Each task is either **standing** (appears every week, ticked off once per
+    week) or **one-off** (just the week you add it to). Editing
     starts with Edit/Post Spotify and Edit/Post YouTube; Media starts blank for
     your Sunday shoot list. Add or remove tasks any time.
-  - **Graphics** — no schedule; their work is tracked in the Projects tab.
+  - **Graphics** — a weekly checklist like Media/Editing; bigger pieces can
+    also be tracked as Projects.
 - **Projects pipeline** — capture ideas, assign them to people, set a
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices
@@ -39,8 +42,9 @@ It covers the three branches of the team:
 - **Quick links** — a 🔗 button by the header opens shared links (Google
   Drive, Canva, folders…) that the whole team can add and edit.
 - **Today** — the home screen the app opens to: today's posts with quick
-  check-off, who's on posting duty this week, projects due soon (or overdue),
-  and a nudge when requests are awaiting approval.
+  check-off, who's on posting duty this week, an **Assigned to you** list
+  (your projects and this week's tasks, based on the name you set in Settings),
+  projects due soon (or overdue), and a nudge when requests await approval.
 - **Accounts** — separate content plans for Main Church, YA, YTH and HER,
   switchable from the dropdown under the header.
 - Works on any phone or laptop from a link; installable like a real app

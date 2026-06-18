@@ -9,13 +9,12 @@ const ACCOUNTS = {
 
 // Each team is shown in the format that suits it:
 //   calendar  — a daily Mon–Sun schedule (Social posts every day)
-//   checklist — a weekly standing list ticked off once per week (Media, Editing)
-//   projects  — no schedule at all; work is tracked in the Projects tab (Graphics)
+//   checklist — a weekly list, standing or one-off (Media, Editing, Graphics)
 const BRANCHES = {
   social: { name: "Social Media Team", short: "Social", color: "#3B82F6", desc: "Instagram posts, stories & captions", kind: "calendar" },
   media: { name: "Photo & Media Team", short: "Media", color: "#8B5CF6", desc: "Weekly shoot list for Sunday", kind: "checklist" },
   editing: { name: "Editing Team", short: "Editing", color: "#10B981", desc: "Weekly YouTube & Spotify tasks", kind: "checklist" },
-  graphics: { name: "Graphics Team", short: "Graphics", color: "#F59E0B", desc: "Design work, assigned as projects", kind: "projects" },
+  graphics: { name: "Graphics Team", short: "Graphics", color: "#F59E0B", desc: "Design tasks & weekly to-dos", kind: "checklist" },
 };
 
 function branchKind(b) {
@@ -125,6 +124,9 @@ function accountProjects() {
 function itemsForDate(date) {
   const dateStr = ymd(date);
   return accountItems().filter((it) => {
+    // The daily calendar is for calendar-kind teams only; checklist teams
+    // (Media/Editing/Graphics) live in their own weekly list.
+    if (branchKind(it.branch) !== "calendar") return false;
     if (branchFilter !== "all" && it.branch !== branchFilter) return false;
     return showsOn(it, date, dateStr);
   });
@@ -137,6 +139,7 @@ function weekStats(filterBranch) {
     const date = addDays(weekStart, i);
     const dateStr = ymd(date);
     accountItems().forEach((it) => {
+      if (branchKind(it.branch) !== "calendar") return;
       if (filterBranch && it.branch !== filterBranch) return;
       if (branchFilter !== "all" && !filterBranch && it.branch !== branchFilter) return;
       if (!showsOn(it, date, dateStr)) return;
@@ -277,10 +280,7 @@ function taskRowHtml(it, dateStr) {
 // The Week tab routes to the format that fits the selected team.
 function renderWeek() {
   const kind = branchKind(branchFilter);
-  let body;
-  if (kind === "checklist") body = renderChecklist(branchFilter);
-  else if (kind === "projects") body = renderTeamProjectsRedirect(branchFilter);
-  else body = renderCalendar();
+  const body = kind === "checklist" ? renderChecklist(branchFilter) : renderCalendar();
   return `${weekNavHtml()}${chipsHtml()}${body}`;
 }
 
@@ -321,38 +321,67 @@ function renderCalendar() {
     ${days}`;
 }
 
-// Media / Editing: a weekly standing checklist. Items don't sit on a day —
-// the whole list is ticked off once per week (completion keyed to the week's
-// Monday), and the standing list is edited via Add / tap-to-edit / delete.
-function checklistRowHtml(it, wkStr) {
-  const done = Store.isDone(it.id, wkStr);
+// Media / Editing / Graphics: a weekly list. Items are either standing (recur
+// every week, ticked off once per week, completion keyed to the week's Monday)
+// or one-off (a task for a single week, keyed to its own date). Edit the list
+// via Add / tap-to-edit / delete.
+function checklistRowHtml(it, key) {
+  const done = Store.isDone(it.id, key);
   const assetLink = it.asset_url
     ? `<a class="task-asset" href="${esc(it.asset_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open asset link">&#128279;</a>`
     : "";
+  const meta = [
+    it.assignee ? `<span>&#128100; ${esc(it.assignee)}</span>` : "",
+    !it.recurring ? `<span class="repeat-tag">&#128197; this week only</span>` : "",
+  ]
+    .filter(Boolean)
+    .join("");
   return `
-    <div class="task ${done ? "done-row" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${wkStr}">
-      <button class="checkbox ${done ? "done" : ""}" data-action="toggle-done" data-id="${it.id}" data-date="${wkStr}" aria-label="Mark done">&#10003;</button>
+    <div class="task ${done ? "done-row" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${key}">
+      <button class="checkbox ${done ? "done" : ""}" data-action="toggle-done" data-id="${it.id}" data-date="${key}" aria-label="Mark done">&#10003;</button>
       <div class="task-main">
         <div class="task-title">${esc(it.title)}</div>
-        ${it.assignee ? `<div class="task-meta"><span>&#128100; ${esc(it.assignee)}</span></div>` : ""}
+        ${meta ? `<div class="task-meta">${meta}</div>` : ""}
         ${it.notes ? `<div class="task-preview">${esc(it.notes)}</div>` : ""}
       </div>
       ${assetLink}
     </div>`;
 }
 
+// Standing items show every week; one-off items only in the week they belong to.
+function checklistItemsForWeek(branch, wkStr, wkEnd) {
+  return accountItems()
+    .filter((it) => it.branch === branch)
+    .filter((it) => {
+      if (it.recurring) {
+        if (it.start_date && wkEnd < it.start_date) return false;
+        if (it.end_date && wkStr > it.end_date) return false;
+        return true;
+      }
+      return it.date >= wkStr && it.date <= wkEnd;
+    });
+}
+
+// Completion key: standing items tick per week (Monday); one-off by their date.
+function checklistKey(it, wkStr) {
+  return it.recurring ? wkStr : it.date;
+}
+
 function renderChecklist(branch) {
   const b = BRANCHES[branch];
   const wkStr = ymd(weekStart);
+  const wkEnd = ymd(addDays(weekStart, 6));
   const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
-  const items = accountItems().filter((it) => it.branch === branch);
-  const done = items.filter((it) => Store.isDone(it.id, wkStr)).length;
+  const items = checklistItemsForWeek(branch, wkStr, wkEnd);
+  const done = items.filter((it) => Store.isDone(it.id, checklistKey(it, wkStr))).length;
   const total = items.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
 
   const list = total
-    ? `<div class="day-card today-tasks">${items.map((it) => checklistRowHtml(it, wkStr)).join("")}</div>`
-    : `<div class="empty-state">No standing tasks yet for ${esc(b.short)}.<br/>Tap <b>+ Add task</b> to build the weekly list.</div>`;
+    ? `<div class="day-card today-tasks">${items
+        .map((it) => checklistRowHtml(it, checklistKey(it, wkStr)))
+        .join("")}</div>`
+    : `<div class="empty-state">No tasks for ${esc(b.short)} this week.<br/>Tap <b>+ Add task</b> for a standing (every week) or one-off task.</div>`;
 
   return `
     <div class="progress-card">
@@ -361,17 +390,6 @@ function renderChecklist(branch) {
     </div>
     ${list}
     <button class="list-add" data-action="add-item" data-branch="${branch}">+ Add task</button>`;
-}
-
-// Graphics: no schedule — point people to where the work actually lives.
-function renderTeamProjectsRedirect(branch) {
-  const b = BRANCHES[branch];
-  return `
-    <div class="empty-state">
-      <div class="redirect-title">${esc(b.name)}</div>
-      ${esc(b.desc)}.<br/>This team has no weekly schedule — their work is tracked in <b>Projects</b>.
-      <div class="redirect-cta"><button class="primary-btn" data-action="tab" data-tab="projects">Go to Projects</button></div>
-    </div>`;
 }
 
 function weekAssignee() {
@@ -502,6 +520,74 @@ function dueSoonRowHtml(r, days) {
     </div>`;
 }
 
+// Everything assigned to the person whose name is set on this device (Settings).
+// Projects span all accounts; items are this week's, in the current account.
+function assignedToMe() {
+  const me = (getPrefs().myName || "").trim().toLowerCase();
+  if (!me) return null;
+  const projects = Store.get()
+    .projects.filter((p) => (p.assignee || "").trim().toLowerCase() === me && (p.status || "idea") !== "posted")
+    .sort((a, b) => (a.due_date || "9999").localeCompare(b.due_date || "9999"));
+  const cw = startOfWeek(new Date());
+  const wkStr = ymd(cw);
+  const wkEnd = ymd(addDays(cw, 6));
+  const items = accountItems()
+    .filter((it) => (it.assignee || "").trim().toLowerCase() === me)
+    .filter((it) => {
+      if (branchKind(it.branch) === "calendar") {
+        if (!it.recurring) return it.date >= wkStr && it.date <= wkEnd;
+        for (let i = 0; i < 7; i++) {
+          const d = addDays(cw, i);
+          if (showsOn(it, d, ymd(d))) return true;
+        }
+        return false;
+      }
+      if (it.recurring) {
+        if (it.start_date && wkEnd < it.start_date) return false;
+        if (it.end_date && wkStr > it.end_date) return false;
+        return true;
+      }
+      return it.date >= wkStr && it.date <= wkEnd;
+    });
+  return { projects, items };
+}
+
+function assignedProjectRowHtml(p) {
+  const days = p.due_date ? daysUntil(p.due_date) : null;
+  let badge = "";
+  if (days !== null) {
+    const cls = days < 0 ? "overdue" : days <= 1 ? "soon" : "";
+    const label = days < 0 ? `${-days}d overdue` : days === 0 ? "Today" : days === 1 ? "Tomorrow" : `${days}d`;
+    badge = `<span class="due-badge ${cls}">${label}</span>`;
+  }
+  const statusLabel = (PROJECT_STATUSES.find(([k]) => k === p.status) || ["", ""])[1];
+  return `
+    <div class="due-row" data-action="edit-project" data-id="${p.id}">
+      <div class="due-main">
+        <div class="due-title">${esc(p.title)}</div>
+        <div class="due-meta"><span class="acct-tag">${esc(ACCOUNTS[p.account || "main"])}</span> &middot; ${esc(statusLabel)}</div>
+      </div>
+      ${badge}
+    </div>`;
+}
+
+function assignedItemRowHtml(it) {
+  const b = BRANCHES[it.branch] || BRANCHES.social;
+  const extra =
+    branchKind(it.branch) === "calendar" && it.recurring
+      ? " &middot; " + repeatLabel(it)
+      : branchKind(it.branch) === "checklist" && !it.recurring
+        ? " &middot; this week"
+        : "";
+  return `
+    <div class="due-row" data-action="edit-item" data-id="${it.id}">
+      <div class="due-main">
+        <div class="due-title">${esc(it.title)}</div>
+        <div class="due-meta"><span class="bdot" style="background:${b.color}"></span> ${esc(b.short)}${extra}</div>
+      </div>
+    </div>`;
+}
+
 // The home screen: a single glance at "what matters today".
 function renderToday() {
   const now = new Date();
@@ -512,8 +598,11 @@ function renderToday() {
     month: "long",
   });
 
-  // Today's posts for the current account (all teams, regardless of chip).
-  const todayItems = accountItems().filter((it) => showsOn(it, now, todayStr));
+  // Today's posts: the daily (Social) calendar only — checklist teams live in
+  // their own weekly list, not the day-by-day view.
+  const todayItems = accountItems().filter(
+    (it) => branchKind(it.branch) === "calendar" && showsOn(it, now, todayStr)
+  );
   const done = todayItems.filter((it) => Store.isDone(it.id, todayStr)).length;
   const total = todayItems.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -540,6 +629,22 @@ function renderToday() {
     ? `<div class="section-title">Coming up</div>${soon.map((x) => dueSoonRowHtml(x.r, x.days)).join("")}`
     : "";
 
+  // Assigned to you: driven by the name set in Settings on this device.
+  const mine = assignedToMe();
+  let assignedHtml = "";
+  if (!mine) {
+    assignedHtml = `
+      <button type="button" class="today-alert" data-action="settings">
+        <span>&#128100; Set your name to see what's assigned to you</span>
+        <span class="assign-link">Settings &#8594;</span>
+      </button>`;
+  } else if (mine.projects.length || mine.items.length) {
+    assignedHtml = `
+      <div class="section-title">Assigned to you</div>
+      ${mine.projects.map(assignedProjectRowHtml).join("")}
+      ${mine.items.map(assignedItemRowHtml).join("")}`;
+  }
+
   // Requests is a shared inbox — surface the pending count from any account.
   const pending = Store.get().requests.filter((r) => (r.status || "pending") === "pending").length;
   const reqHtml = pending
@@ -556,6 +661,7 @@ function renderToday() {
     </div>
     ${dutyHtml}
     ${reqHtml}
+    ${assignedHtml}
     <div class="progress-card">
       <div class="label"><span>Today's posts</span><span>${done} of ${total} done</span></div>
       <div class="bar"><span style="width:${pct}%"></span></div>
@@ -618,8 +724,10 @@ function openItemModal(opts) {
     date: opts.date || ymd(new Date()),
   };
   const schedule = !it.recurring ? "once" : (it.recur || "weekly") === "monthly" ? "monthly" : "weekly";
+  // Checklist chooser: new items default to a standing (every-week) task.
+  const clSchedule = !editing ? "standing" : it.recurring ? "standing" : "once";
+  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
   const branchOpts = Object.entries(BRANCHES)
-    .filter(([, b]) => b.kind !== "projects") // Graphics has no schedule, so no items
     .map(([k, b]) => `<option value="${k}" ${it.branch === k ? "selected" : ""}>${b.name}</option>`)
     .join("");
   const dayOpts = DAY_NAMES.map(
@@ -666,7 +774,15 @@ function openItemModal(opts) {
             <select name="dow">${dayOpts}</select>
           </div>
         </div>
-        <p class="hint" id="checklist-hint" style="display:none">This is a weekly standing task — it appears on the team's list every week and is ticked off once per week.</p>
+        <div class="field" id="checklist-sched" style="display:none">
+          <label>How often</label>
+          <div class="radio-row">
+            <label><input type="radio" name="clsched" value="standing" ${clSchedule === "standing" ? "checked" : ""}/> Every week</label>
+            <label><input type="radio" name="clsched" value="once" ${clSchedule === "once" ? "checked" : ""}/> Just one week</label>
+          </div>
+          <p class="hint" id="cl-standing-hint">A standing task — appears on the list every week, ticked off once per week.</p>
+          <p class="hint" id="cl-once-hint" style="display:none">A one-off for the week of <b>${range}</b> only.</p>
+        </div>
         ${
           editing && editing.recurring
             ? `<div class="field scope-field" id="scope-wrap">
@@ -698,24 +814,35 @@ function openItemModal(opts) {
   wireAssigneeField(form);
   const scheduleWrap = form.querySelector("#schedule-wrap");
   const scopeWrap = form.querySelector("#scope-wrap");
-  const checklistHint = form.querySelector("#checklist-hint");
+  const checklistSched = form.querySelector("#checklist-sched");
+  const clStandingHint = form.querySelector("#cl-standing-hint");
+  const clOnceHint = form.querySelector("#cl-once-hint");
   const syncScheduleFields = () => {
     const s = form.schedule.value;
     form.date.style.display = s === "once" ? "block" : "none";
     form.querySelector(".row-2").style.display = s === "once" ? "none" : "flex";
     form.nth.style.display = s === "monthly" ? "block" : "none";
   };
+  const syncClSched = () => {
+    const once = form.clsched.value === "once";
+    clOnceHint.style.display = once ? "block" : "none";
+    clStandingHint.style.display = once ? "none" : "block";
+  };
   // Calendar teams (Social) pick a day/recurrence; checklist teams (Media,
-  // Editing) are always whole-week standing tasks, so hide the scheduler.
+  // Editing, Graphics) pick standing-every-week vs one-off-this-week.
   const syncBranchMode = () => {
     const isCal = branchKind(form.branch.value) === "calendar";
     scheduleWrap.style.display = isCal ? "" : "none";
+    checklistSched.style.display = isCal ? "none" : "";
     if (scopeWrap) scopeWrap.style.display = isCal ? "" : "none";
-    checklistHint.style.display = isCal ? "none" : "block";
     if (isCal) syncScheduleFields();
+    else syncClSched();
   };
   form.querySelectorAll('input[name="schedule"]').forEach((radio) =>
     radio.addEventListener("change", syncScheduleFields)
+  );
+  form.querySelectorAll('input[name="clsched"]').forEach((radio) =>
+    radio.addEventListener("change", syncClSched)
   );
   form.branch.addEventListener("change", syncBranchMode);
   syncBranchMode();
@@ -739,20 +866,23 @@ function openItemModal(opts) {
           nth: s === "monthly" ? Number(form.nth.value) : null,
           date: s === "once" ? form.date.value || ymd(new Date()) : null,
         }
-      : {
-          // Weekly standing task: no fixed day, recurs every week.
-          account,
-          title: form.title.value.trim(),
-          branch,
-          assignee: readAssignee(form),
-          notes: form.notes.value.trim(),
-          asset_url: form.asset_url.value.trim(),
-          recurring: true,
-          recur: "weekly",
-          dow: null,
-          nth: null,
-          date: null,
-        };
+      : (() => {
+          // Checklist task: standing (every week) or one-off (this week only).
+          const once = form.clsched.value === "once";
+          return {
+            account,
+            title: form.title.value.trim(),
+            branch,
+            assignee: readAssignee(form),
+            notes: form.notes.value.trim(),
+            asset_url: form.asset_url.value.trim(),
+            recurring: !once,
+            recur: "weekly",
+            dow: null,
+            nth: null,
+            date: once ? ymd(weekStart) : null,
+          };
+        })();
     if (!fields.title) return;
     if (editing) {
       // Scope only applies to calendar (Social) recurring items that stay
@@ -840,7 +970,9 @@ function openProjectModal(id) {
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const fields = {
-      account,
+      // Keep an existing project in its own account (it may be edited from the
+      // cross-account "Assigned to you" list); new projects use the current one.
+      account: editing ? editing.account || "main" : account,
       title: form.title.value.trim(),
       notes: form.notes.value.trim(),
       assignee: readAssignee(form),

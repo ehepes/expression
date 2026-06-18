@@ -10,7 +10,7 @@ create table if not exists items (
   account text not null default 'main',
   title text not null,
   notes text not null default '',
-  branch text not null default 'social', -- social | media | editing
+  branch text not null default 'social', -- social | media | editing | graphics
   assignee text not null default '',
   asset_url text not null default '',
   recurring boolean not null default false,

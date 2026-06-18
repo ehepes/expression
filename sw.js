@@ -1,7 +1,7 @@
 /* Offline support. Network-first: when online you always get the latest
    files (no more stale app after a deploy); when offline you fall back to
    the cached copy. */
-const CACHE = "expression-v13";
+const CACHE = "expression-v14";
 const ASSETS = [
   "./",
   "./index.html",
