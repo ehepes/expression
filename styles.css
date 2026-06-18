@@ -479,48 +479,73 @@ body {
   line-height: 1.5;
 }
 
-/* ---------- Teams ---------- */
-.team-card {
+/* ---------- Today (home screen) ---------- */
+.today-hero { margin: 2px 4px 16px; }
+
+.today-date { font-size: 23px; font-weight: 800; letter-spacing: 0.01em; line-height: 1.2; }
+
+.today-sub {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 3px;
+}
+
+.today-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: #FFF6E0;
+  border: 1.5px solid #F2DFA8;
+  color: #7A5B12;
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  font-family: var(--font);
+  font-size: 13.5px;
+  font-weight: 700;
+  cursor: pointer;
+  text-align: left;
+}
+
+.today-alert .assign-link { margin-left: auto; color: var(--blue); font-weight: 800; white-space: nowrap; }
+
+.today-tasks { margin-top: 0; }
+.today-tasks .task:first-child { border-top: none; }
+
+/* Coming-up project rows */
+.due-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   background: var(--card);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  margin-bottom: 14px;
-  overflow: hidden;
-}
-
-.team-head {
-  padding: 14px 16px 12px;
-  color: #fff;
-}
-
-.team-head h3 { margin: 0; font-size: 16px; font-weight: 800; letter-spacing: 0.02em; }
-.team-head p { margin: 3px 0 0; font-size: 12.5px; opacity: 0.9; }
-
-.team-body { padding: 12px 16px 14px; }
-
-.team-stats {
-  display: flex;
-  justify-content: space-between;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
-
-.team-add {
-  width: 100%;
-  margin-top: 12px;
-  border: 1.5px dashed #C2CFE6;
-  background: none;
-  color: var(--blue);
-  font-weight: 700;
-  font-size: 13.5px;
-  padding: 10px;
-  border-radius: 12px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
   cursor: pointer;
 }
 
-.team-card .task { padding-left: 0; padding-right: 0; }
+.due-main { flex: 1; min-width: 0; }
+.due-title { font-size: 14.5px; font-weight: 700; line-height: 1.3; }
+.due-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+.due-badge {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 800;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: #EAF1FF;
+  color: var(--blue);
+  white-space: nowrap;
+}
+
+.due-badge.soon { background: #FFF1DF; color: #C26A00; }
+.due-badge.overdue { background: #FDEDF0; color: var(--red); }
 
 /* ---------- Tab bar ---------- */
 .tabbar {

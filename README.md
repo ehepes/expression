@@ -34,7 +34,9 @@ It covers the three branches of the team:
   into the Projects pipeline (then assign it), or decline it.
 - **Quick links** — a 🔗 button by the header opens shared links (Google
   Drive, Canva, folders…) that the whole team can add and edit.
-- **Teams view** — each branch's weekly progress and task list at a glance.
+- **Today** — the home screen the app opens to: today's posts with quick
+  check-off, who's on posting duty this week, projects due soon (or overdue),
+  and a nudge when requests are awaiting approval.
 - **Accounts** — separate content plans for Main Church, YA, YTH and HER,
   switchable from the dropdown under the header.
 - Works on any phone or laptop from a link; installable like a real app
@@ -102,7 +104,8 @@ It gets its own icon, opens full-screen, and works offline.
   day; tap the row to edit or delete it.
 - **Projects** tab: **+ New project** to capture an idea. Assign someone,
   set a "required by" date, and use **Move to …** to advance it.
-- **Teams** tab: each branch's weekly progress, plus quick add per team.
+- **Today** tab: the home screen — today's posts, this week's posting duty,
+  projects due soon, and pending requests, all at a glance.
 
 The app ships with the **Main Church standard weekly Instagram schedule**
 (from the team's posting calendar) plus the Special Reels Tracker projects.

@@ -48,9 +48,9 @@ function setPrefs(patch) {
 }
 
 // ----- app state -----
-let tab = ["week", "projects", "requests", "teams"].includes(location.hash.slice(1))
+let tab = ["today", "week", "projects", "requests"].includes(location.hash.slice(1))
   ? location.hash.slice(1)
-  : "week";
+  : "today";
 let branchFilter = "all";
 let weekStart = startOfWeek(new Date());
 let account = ACCOUNTS[getPrefs().account] ? getPrefs().account : "main";
@@ -160,7 +160,7 @@ function render() {
   if (tab === "week") view.innerHTML = renderWeek();
   else if (tab === "projects") view.innerHTML = renderProjects();
   else if (tab === "requests") view.innerHTML = renderRequests();
-  else view.innerHTML = renderTeams();
+  else view.innerHTML = renderToday();
 }
 
 // Little count bubble on the Requests tab when there are pending requests.
@@ -400,40 +400,100 @@ function projectCardHtml(r) {
     </div>`;
 }
 
-function renderTeams() {
-  const today = ymd(new Date());
-  let cards = "";
-  Object.entries(BRANCHES).forEach(([key, b]) => {
-    const { total, done } = weekStats(key);
-    const pct = total ? Math.round((done / total) * 100) : 0;
+// Whole-number days from today to a yyyy-mm-dd date (negative = in the past).
+function daysUntil(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const target = new Date(y, m - 1, d);
+  const now = new Date();
+  const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target - t0) / 86400000);
+}
 
-    let rows = "";
-    for (let i = 0; i < 7; i++) {
-      const date = addDays(weekStart, i);
-      const dateStr = ymd(date);
-      accountItems()
-        .filter((it) => it.branch === key && showsOn(it, date, dateStr))
-        .forEach((it) => {
-          rows += taskRowHtml(it, dateStr);
-        });
-    }
+// Who is on posting duty for the actual current week (independent of whatever
+// week the Week tab is currently parked on).
+function currentWeekAssignee() {
+  const ws = ymd(startOfWeek(new Date()));
+  const wa = Store.get().week_assignments.find(
+    (w) => (w.account || "main") === account && w.week_start === ws
+  );
+  return wa ? wa.assignee : "";
+}
 
-    cards += `
-      <div class="team-card">
-        <div class="team-head" style="background:linear-gradient(135deg, ${b.color}, ${b.color}CC)">
-          <h3>${b.name}</h3>
-          <p>${b.desc}</p>
-        </div>
-        <div class="team-body">
-          <div class="team-stats"><span>This week</span><span>${done} / ${total} done (${pct}%)</span></div>
-          <div class="bar"><span style="width:${pct}%"></span></div>
-          ${rows || '<div class="day-empty" style="padding:12px 0 0">No tasks this week.</div>'}
-          <button class="team-add" data-action="add-item" data-branch="${key}" data-date="${today}">+ Add task for this team</button>
-        </div>
-      </div>`;
+function dueSoonRowHtml(r, days) {
+  const label =
+    days < 0 ? `${-days}d overdue` : days === 0 ? "Today" : days === 1 ? "Tomorrow" : `${days} days`;
+  const cls = days < 0 ? "overdue" : days <= 1 ? "soon" : "";
+  const statusLabel = (PROJECT_STATUSES.find(([k]) => k === r.status) || ["", ""])[1];
+  return `
+    <div class="due-row" data-action="edit-project" data-id="${r.id}">
+      <div class="due-main">
+        <div class="due-title">${esc(r.title)}</div>
+        <div class="due-meta">${r.assignee ? "&#128100; " + esc(r.assignee) : "Unassigned"} &middot; ${esc(statusLabel)}</div>
+      </div>
+      <span class="due-badge ${cls}">${label}</span>
+    </div>`;
+}
+
+// The home screen: a single glance at "what matters today".
+function renderToday() {
+  const now = new Date();
+  const todayStr = ymd(now);
+  const dateLabel = now.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
   });
 
-  return `${weekNavHtml()}${cards}`;
+  // Today's posts for the current account (all teams, regardless of chip).
+  const todayItems = accountItems().filter((it) => showsOn(it, now, todayStr));
+  const done = todayItems.filter((it) => Store.isDone(it.id, todayStr)).length;
+  const total = todayItems.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const tasksHtml = total
+    ? todayItems.map((it) => taskRowHtml(it, todayStr)).join("")
+    : '<div class="day-empty">Nothing scheduled for today — enjoy the breather.</div>';
+
+  // Posting duty for this (real) week.
+  const who = currentWeekAssignee();
+  const dutyHtml = `
+    <button type="button" class="week-assign ${who ? "" : "unset"}" data-action="assign-week-current">
+      <span>&#128100; Posting this week:</span>
+      <b>${who ? esc(who) : "no one yet"}</b>
+      <span class="assign-link">${who ? "Change" : "Assign"}</span>
+    </button>`;
+
+  // Coming up: current-account projects due within a week (or overdue), still open.
+  const soon = accountProjects()
+    .filter((r) => r.due_date && r.status !== "posted")
+    .map((r) => ({ r, days: daysUntil(r.due_date) }))
+    .filter((x) => x.days <= 7)
+    .sort((a, b) => a.days - b.days);
+  const soonHtml = soon.length
+    ? `<div class="section-title">Coming up</div>${soon.map((x) => dueSoonRowHtml(x.r, x.days)).join("")}`
+    : "";
+
+  // Requests is a shared inbox — surface the pending count from any account.
+  const pending = Store.get().requests.filter((r) => (r.status || "pending") === "pending").length;
+  const reqHtml = pending
+    ? `<button type="button" class="today-alert" data-action="tab" data-tab="requests">
+         <span>&#128229; ${pending} request${pending === 1 ? "" : "s"} awaiting approval</span>
+         <span class="assign-link">Review &#8594;</span>
+       </button>`
+    : "";
+
+  return `
+    <div class="today-hero">
+      <div class="today-date">${dateLabel}</div>
+      <div class="today-sub">${esc(ACCOUNTS[account])}</div>
+    </div>
+    ${dutyHtml}
+    ${reqHtml}
+    <div class="progress-card">
+      <div class="label"><span>Today's posts</span><span>${done} of ${total} done</span></div>
+      <div class="bar"><span style="width:${pct}%"></span></div>
+    </div>
+    <div class="day-card today-tasks">${tasksHtml}</div>
+    ${soonHtml}`;
 }
 
 // ----- modals -----
@@ -1073,6 +1133,11 @@ document.addEventListener("click", (e) => {
       }
       break;
     case "assign-week":
+      openWeekAssignModal();
+      break;
+    case "assign-week-current":
+      // From the Today screen: always target the real current week.
+      weekStart = startOfWeek(new Date());
       openWeekAssignModal();
       break;
     case "unassign-week":
