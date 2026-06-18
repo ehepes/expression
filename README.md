@@ -11,12 +11,16 @@ It covers the three branches of the team:
 
 **Features**
 
-- **Week view** — see everything that needs to happen each day of the week,
-  tick items off as they're done, flip between weeks, or tap the date range
-  to jump straight to any week or month. Posts can be one-off, weekly, or
-  monthly (e.g. "3rd Wednesday"). When editing a recurring post you choose
-  the scope: **just this week**, **this week and all future weeks**, or
-  **every week** — so one-off tweaks never disturb the standing schedule.
+- **Week view** — pick a team from the chips; each shows the format that fits:
+  - **Social** — a daily Mon–Sun calendar. Tick posts off, flip between weeks,
+    or tap the date range to jump to any week. Posts can be one-off, weekly, or
+    monthly (e.g. "3rd Wednesday"); when editing a recurring post you choose the
+    scope (**just this week**, **future weeks**, or **every week**).
+  - **Media** & **Editing** — a weekly standing checklist (not daily). Set the
+    list once; it appears every week and is ticked off once per week. Editing
+    starts with Edit/Post Spotify and Edit/Post YouTube; Media starts blank for
+    your Sunday shoot list. Add or remove tasks any time.
+  - **Graphics** — no schedule; their work is tracked in the Projects tab.
 - **Projects pipeline** — capture ideas, assign them to people, set a
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices

@@ -82,9 +82,12 @@ window.Store = (() => {
     const w = (dow, title, notes, branch) => ({
       id: uid(), account: "main", title, notes: notes || "", branch: branch || "social",
       assignee: "", recurring: true, recur: "weekly", dow, nth: null,
-      date: null, start_date: null, end_date: null,
+      date: null, start_date: null, end_date: null, asset_url: "",
     });
     const m = (nth, dow, title, notes) => Object.assign(w(dow, title, notes), { recur: "monthly", nth });
+    // Weekly standing checklist task (Media / Editing): recurs every week with
+    // no fixed day (dow null), ticked off once per week.
+    const c = (branch, title, notes) => Object.assign(w(null, title, notes, branch), { dow: null });
     const p = (title, notes, assignee, status, due) => ({
       id: uid(), account: "main", title, notes: notes || "", assignee: assignee || "",
       status: status || "idea", due_date: due || null,
@@ -100,12 +103,10 @@ window.Store = (() => {
         w(0, "Story Recap", "Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00"),
         w(0, "Invite to Prayer Story", "Use video from drive · 08:00–10:00"),
         w(0, "Sunday Reel", "Include engagement sticker (poll/question) · 08:00–10:00"),
-        w(0, "Upload Sunday sermon to YouTube", "", "editing"),
         // Tuesday
         w(1, "Prayer Story", "Scripture + prayer prompt + question sticker · 08:00–10:00"),
         w(1, "Podcast/YT Promo Story", "20-sec audiogram + subtitles + CTA: Listen on Spotify · 08:00–10:00"),
         w(1, "Expect Group Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
-        w(1, "Cut sermon highlights for Spotify podcast", "", "editing"),
         // Wednesday
         w(2, "Expect Socials Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
         w(2, "Join a Team Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
@@ -123,8 +124,12 @@ window.Store = (() => {
         // Saturday
         w(5, "Encouragement Carousel", "Hook + Scripture + why Sunday matters + service time · 10:00"),
         w(5, "Countdown Story", "Who are you bringing? + location + parking · 10:00"),
-        // Sunday
-        w(6, "Service day — live stories + photo coverage", "", "media"),
+        // Editing team — weekly standing tasks (no fixed day)
+        c("editing", "Edit Spotify"),
+        c("editing", "Post Spotify"),
+        c("editing", "Edit YouTube"),
+        c("editing", "Post YouTube"),
+        // Media team starts with a blank weekly shoot list — added in-app.
       ],
       completions: [],
       projects: [

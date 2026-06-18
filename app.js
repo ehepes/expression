@@ -7,11 +7,20 @@ const ACCOUNTS = {
   her: "HER",
 };
 
+// Each team is shown in the format that suits it:
+//   calendar  — a daily Mon–Sun schedule (Social posts every day)
+//   checklist — a weekly standing list ticked off once per week (Media, Editing)
+//   projects  — no schedule at all; work is tracked in the Projects tab (Graphics)
 const BRANCHES = {
-  social: { name: "Social Media Team", short: "Social", color: "#3B82F6", desc: "Instagram posts, stories & captions" },
-  media: { name: "Photo & Media Team", short: "Media", color: "#8B5CF6", desc: "Photography, filming & visuals" },
-  editing: { name: "Editing Team", short: "Editing", color: "#10B981", desc: "YouTube & Spotify content" },
+  social: { name: "Social Media Team", short: "Social", color: "#3B82F6", desc: "Instagram posts, stories & captions", kind: "calendar" },
+  media: { name: "Photo & Media Team", short: "Media", color: "#8B5CF6", desc: "Weekly shoot list for Sunday", kind: "checklist" },
+  editing: { name: "Editing Team", short: "Editing", color: "#10B981", desc: "Weekly YouTube & Spotify tasks", kind: "checklist" },
+  graphics: { name: "Graphics Team", short: "Graphics", color: "#F59E0B", desc: "Design work, assigned as projects", kind: "projects" },
 };
+
+function branchKind(b) {
+  return (BRANCHES[b] || {}).kind || "calendar";
+}
 
 const PROJECT_STATUSES = [
   ["idea", "Idea"],
@@ -51,7 +60,7 @@ function setPrefs(patch) {
 let tab = ["today", "week", "projects", "requests"].includes(location.hash.slice(1))
   ? location.hash.slice(1)
   : "today";
-let branchFilter = "all";
+let branchFilter = "social"; // which team is selected on the Week tab
 let weekStart = startOfWeek(new Date());
 let account = ACCOUNTS[getPrefs().account] ? getPrefs().account : "main";
 
@@ -225,15 +234,12 @@ function weekNavHtml() {
 }
 
 function chipsHtml() {
-  const chips = [["all", "All teams"]].concat(
-    Object.entries(BRANCHES).map(([k, b]) => [k, b.short])
-  );
   return (
     '<div class="chips">' +
-    chips
+    Object.entries(BRANCHES)
       .map(
-        ([k, label]) =>
-          `<button class="chip ${branchFilter === k ? "active" : ""}" data-action="filter" data-branch="${k}">${label}</button>`
+        ([k, b]) =>
+          `<button class="chip ${branchFilter === k ? "active" : ""}" data-action="filter" data-branch="${k}">${esc(b.short)}</button>`
       )
       .join("") +
     "</div>"
@@ -268,7 +274,18 @@ function taskRowHtml(it, dateStr) {
     </div>`;
 }
 
+// The Week tab routes to the format that fits the selected team.
 function renderWeek() {
+  const kind = branchKind(branchFilter);
+  let body;
+  if (kind === "checklist") body = renderChecklist(branchFilter);
+  else if (kind === "projects") body = renderTeamProjectsRedirect(branchFilter);
+  else body = renderCalendar();
+  return `${weekNavHtml()}${chipsHtml()}${body}`;
+}
+
+// Social: the full daily Mon–Sun calendar with posting duty and progress.
+function renderCalendar() {
   const today = ymd(new Date());
   const { total, done } = weekStats();
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -296,14 +313,65 @@ function renderWeek() {
   }
 
   return `
-    ${weekNavHtml()}
-    ${chipsHtml()}
     <div class="progress-card">
       <div class="label"><span>This week · ${esc(ACCOUNTS[account])}</span><span>${done} of ${total} done</span></div>
       <div class="bar"><span style="width:${pct}%"></span></div>
     </div>
     ${weekAssignHtml()}
     ${days}`;
+}
+
+// Media / Editing: a weekly standing checklist. Items don't sit on a day —
+// the whole list is ticked off once per week (completion keyed to the week's
+// Monday), and the standing list is edited via Add / tap-to-edit / delete.
+function checklistRowHtml(it, wkStr) {
+  const done = Store.isDone(it.id, wkStr);
+  const assetLink = it.asset_url
+    ? `<a class="task-asset" href="${esc(it.asset_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open asset link">&#128279;</a>`
+    : "";
+  return `
+    <div class="task ${done ? "done-row" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${wkStr}">
+      <button class="checkbox ${done ? "done" : ""}" data-action="toggle-done" data-id="${it.id}" data-date="${wkStr}" aria-label="Mark done">&#10003;</button>
+      <div class="task-main">
+        <div class="task-title">${esc(it.title)}</div>
+        ${it.assignee ? `<div class="task-meta"><span>&#128100; ${esc(it.assignee)}</span></div>` : ""}
+        ${it.notes ? `<div class="task-preview">${esc(it.notes)}</div>` : ""}
+      </div>
+      ${assetLink}
+    </div>`;
+}
+
+function renderChecklist(branch) {
+  const b = BRANCHES[branch];
+  const wkStr = ymd(weekStart);
+  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
+  const items = accountItems().filter((it) => it.branch === branch);
+  const done = items.filter((it) => Store.isDone(it.id, wkStr)).length;
+  const total = items.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  const list = total
+    ? `<div class="day-card today-tasks">${items.map((it) => checklistRowHtml(it, wkStr)).join("")}</div>`
+    : `<div class="empty-state">No standing tasks yet for ${esc(b.short)}.<br/>Tap <b>+ Add task</b> to build the weekly list.</div>`;
+
+  return `
+    <div class="progress-card">
+      <div class="label"><span>${esc(b.name)} · week of ${range}</span><span>${done} of ${total} done</span></div>
+      <div class="bar"><span style="width:${pct}%"></span></div>
+    </div>
+    ${list}
+    <button class="list-add" data-action="add-item" data-branch="${branch}">+ Add task</button>`;
+}
+
+// Graphics: no schedule — point people to where the work actually lives.
+function renderTeamProjectsRedirect(branch) {
+  const b = BRANCHES[branch];
+  return `
+    <div class="empty-state">
+      <div class="redirect-title">${esc(b.name)}</div>
+      ${esc(b.desc)}.<br/>This team has no weekly schedule — their work is tracked in <b>Projects</b>.
+      <div class="redirect-cta"><button class="primary-btn" data-action="tab" data-tab="projects">Go to Projects</button></div>
+    </div>`;
 }
 
 function weekAssignee() {
@@ -551,6 +619,7 @@ function openItemModal(opts) {
   };
   const schedule = !it.recurring ? "once" : (it.recur || "weekly") === "monthly" ? "monthly" : "weekly";
   const branchOpts = Object.entries(BRANCHES)
+    .filter(([, b]) => b.kind !== "projects") // Graphics has no schedule, so no items
     .map(([k, b]) => `<option value="${k}" ${it.branch === k ? "selected" : ""}>${b.name}</option>`)
     .join("");
   const dayOpts = DAY_NAMES.map(
@@ -584,7 +653,7 @@ function openItemModal(opts) {
           <label>Asset / Drive link</label>
           <input type="text" name="asset_url" maxlength="500" value="${esc(it.asset_url || '')}" placeholder="Drive folder, Canva link… (optional)" />
         </div>
-        <div class="field">
+        <div class="field" id="schedule-wrap">
           <label>When</label>
           <div class="radio-row">
             <label><input type="radio" name="schedule" value="once" ${schedule === "once" ? "checked" : ""}/> One date</label>
@@ -597,9 +666,10 @@ function openItemModal(opts) {
             <select name="dow">${dayOpts}</select>
           </div>
         </div>
+        <p class="hint" id="checklist-hint" style="display:none">This is a weekly standing task — it appears on the team's list every week and is ticked off once per week.</p>
         ${
           editing && editing.recurring
-            ? `<div class="field scope-field">
+            ? `<div class="field scope-field" id="scope-wrap">
                  <label>Apply this change to</label>
                  <div class="radio-col">
                    <label><input type="radio" name="scope" value="one" checked /> <span><b>Just this week</b> — other weeks stay the same</span></label>
@@ -613,7 +683,7 @@ function openItemModal(opts) {
           ${
             editing
               ? `<button type="button" class="danger-btn" data-action="delete-item" data-id="${editing.id}" data-date="${esc(opts.date || "")}">Delete</button>` +
-                (editing.recurring
+                (editing.recurring && branchKind(editing.branch) === "calendar"
                   ? `<button type="button" class="ghost-btn" data-action="stop-item" data-id="${editing.id}" title="Keeps past weeks, removes it from this week onward">Stop future weeks</button>`
                   : "")
               : ""
@@ -626,37 +696,69 @@ function openItemModal(opts) {
 
   const form = document.getElementById("item-form");
   wireAssigneeField(form);
+  const scheduleWrap = form.querySelector("#schedule-wrap");
+  const scopeWrap = form.querySelector("#scope-wrap");
+  const checklistHint = form.querySelector("#checklist-hint");
   const syncScheduleFields = () => {
     const s = form.schedule.value;
     form.date.style.display = s === "once" ? "block" : "none";
     form.querySelector(".row-2").style.display = s === "once" ? "none" : "flex";
     form.nth.style.display = s === "monthly" ? "block" : "none";
   };
+  // Calendar teams (Social) pick a day/recurrence; checklist teams (Media,
+  // Editing) are always whole-week standing tasks, so hide the scheduler.
+  const syncBranchMode = () => {
+    const isCal = branchKind(form.branch.value) === "calendar";
+    scheduleWrap.style.display = isCal ? "" : "none";
+    if (scopeWrap) scopeWrap.style.display = isCal ? "" : "none";
+    checklistHint.style.display = isCal ? "none" : "block";
+    if (isCal) syncScheduleFields();
+  };
   form.querySelectorAll('input[name="schedule"]').forEach((radio) =>
     radio.addEventListener("change", syncScheduleFields)
   );
-  syncScheduleFields();
+  form.branch.addEventListener("change", syncBranchMode);
+  syncBranchMode();
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    const branch = form.branch.value;
+    const isCal = branchKind(branch) === "calendar";
     const s = form.schedule.value;
-    const fields = {
-      account,
-      title: form.title.value.trim(),
-      branch: form.branch.value,
-      assignee: readAssignee(form),
-      notes: form.notes.value.trim(),
-      asset_url: form.asset_url.value.trim(),
-      recurring: s !== "once",
-      recur: s === "monthly" ? "monthly" : "weekly",
-      dow: s === "once" ? null : Number(form.dow.value),
-      nth: s === "monthly" ? Number(form.nth.value) : null,
-      date: s === "once" ? form.date.value || ymd(new Date()) : null,
-    };
+    const fields = isCal
+      ? {
+          account,
+          title: form.title.value.trim(),
+          branch,
+          assignee: readAssignee(form),
+          notes: form.notes.value.trim(),
+          asset_url: form.asset_url.value.trim(),
+          recurring: s !== "once",
+          recur: s === "monthly" ? "monthly" : "weekly",
+          dow: s === "once" ? null : Number(form.dow.value),
+          nth: s === "monthly" ? Number(form.nth.value) : null,
+          date: s === "once" ? form.date.value || ymd(new Date()) : null,
+        }
+      : {
+          // Weekly standing task: no fixed day, recurs every week.
+          account,
+          title: form.title.value.trim(),
+          branch,
+          assignee: readAssignee(form),
+          notes: form.notes.value.trim(),
+          asset_url: form.asset_url.value.trim(),
+          recurring: true,
+          recur: "weekly",
+          dow: null,
+          nth: null,
+          date: null,
+        };
     if (!fields.title) return;
     if (editing) {
-      // Scope only applies when an existing recurring item stays recurring.
-      const scope = form.scope && editing.recurring && fields.recurring ? form.scope.value : "all";
+      // Scope only applies to calendar (Social) recurring items that stay
+      // recurring. Checklist tasks always update the standing definition.
+      const scope =
+        isCal && form.scope && editing.recurring && fields.recurring ? form.scope.value : "all";
       if (scope === "one") {
         // Override just this occurrence: hide the original on that date and
         // drop a one-off copy carrying the edited details.

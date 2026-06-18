@@ -132,12 +132,10 @@ insert into items (account, title, notes, branch, recurring, recur, dow, nth) va
   ('main', 'Story Recap', 'Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00', 'social', true, 'weekly', 0, null),
   ('main', 'Invite to Prayer Story', 'Use video from drive · 08:00–10:00', 'social', true, 'weekly', 0, null),
   ('main', 'Sunday Reel', 'Include engagement sticker (poll/question) · 08:00–10:00', 'social', true, 'weekly', 0, null),
-  ('main', 'Upload Sunday sermon to YouTube', '', 'editing', true, 'weekly', 0, null),
   -- Tuesday
   ('main', 'Prayer Story', 'Scripture + prayer prompt + question sticker · 08:00–10:00', 'social', true, 'weekly', 1, null),
   ('main', 'Podcast/YT Promo Story', '20-sec audiogram + subtitles + CTA: Listen on Spotify · 08:00–10:00', 'social', true, 'weekly', 1, null),
   ('main', 'Expect Group Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 1, null),
-  ('main', 'Cut sermon highlights for Spotify podcast', '', 'editing', true, 'weekly', 1, null),
   -- Wednesday
   ('main', 'Expect Socials Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 2, null),
   ('main', 'Join a Team Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 2, null),
@@ -155,8 +153,12 @@ insert into items (account, title, notes, branch, recurring, recur, dow, nth) va
   -- Saturday
   ('main', 'Encouragement Carousel', 'Hook + Scripture + why Sunday matters + service time · 10:00', 'social', true, 'weekly', 5, null),
   ('main', 'Countdown Story', 'Who are you bringing? + location + parking · 10:00', 'social', true, 'weekly', 5, null),
-  -- Sunday
-  ('main', 'Service day — live stories + photo coverage', '', 'media', true, 'weekly', 6, null);
+  -- Editing team — weekly standing tasks (no fixed day; ticked once per week)
+  ('main', 'Edit Spotify', '', 'editing', true, 'weekly', null, null),
+  ('main', 'Post Spotify', '', 'editing', true, 'weekly', null, null),
+  ('main', 'Edit YouTube', '', 'editing', true, 'weekly', null, null),
+  ('main', 'Post YouTube', '', 'editing', true, 'weekly', null, null);
+-- Media team starts with a blank weekly shoot list — built in-app.
 
 -- Projects from the Special Reels Tracker.
 insert into projects (account, title, notes, assignee, status, due_date) values
