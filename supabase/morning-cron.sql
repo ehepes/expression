@@ -21,6 +21,8 @@ select cron.schedule(
     url := 'https://lboueyjikfjtycymigtw.supabase.co/functions/v1/notify',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
+      -- anon key (public) so the scheduled call clears the function's JWT gateway
+      'Authorization', 'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxib3VleWppa2ZqdHljeW1pZ3R3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMDAxMjQsImV4cCI6MjA5Njc3NjEyNH0.da5mcPwQH-4uPBjWth7DZdvGJhavhDHpTVRhoy42f38',
       'x-cron-secret', 'REPLACE_WITH_CRON_SECRET'
     ),
     body := jsonb_build_object('mode', 'morning')
