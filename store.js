@@ -82,9 +82,12 @@ window.Store = (() => {
     const w = (dow, title, notes, branch) => ({
       id: uid(), account: "main", title, notes: notes || "", branch: branch || "social",
       assignee: "", recurring: true, recur: "weekly", dow, nth: null,
-      date: null, start_date: null, end_date: null,
+      date: null, start_date: null, end_date: null, asset_url: "",
     });
     const m = (nth, dow, title, notes) => Object.assign(w(dow, title, notes), { recur: "monthly", nth });
+    // Weekly standing checklist task (Media / Editing): recurs every week with
+    // no fixed day (dow null), ticked off once per week.
+    const c = (branch, title, notes) => Object.assign(w(null, title, notes, branch), { dow: null });
     const p = (title, notes, assignee, status, due) => ({
       id: uid(), account: "main", title, notes: notes || "", assignee: assignee || "",
       status: status || "idea", due_date: due || null,
@@ -100,12 +103,10 @@ window.Store = (() => {
         w(0, "Story Recap", "Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00"),
         w(0, "Invite to Prayer Story", "Use video from drive · 08:00–10:00"),
         w(0, "Sunday Reel", "Include engagement sticker (poll/question) · 08:00–10:00"),
-        w(0, "Upload Sunday sermon to YouTube", "", "editing"),
         // Tuesday
         w(1, "Prayer Story", "Scripture + prayer prompt + question sticker · 08:00–10:00"),
         w(1, "Podcast/YT Promo Story", "20-sec audiogram + subtitles + CTA: Listen on Spotify · 08:00–10:00"),
         w(1, "Expect Group Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
-        w(1, "Cut sermon highlights for Spotify podcast", "", "editing"),
         // Wednesday
         w(2, "Expect Socials Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
         w(2, "Join a Team Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
@@ -123,8 +124,12 @@ window.Store = (() => {
         // Saturday
         w(5, "Encouragement Carousel", "Hook + Scripture + why Sunday matters + service time · 10:00"),
         w(5, "Countdown Story", "Who are you bringing? + location + parking · 10:00"),
-        // Sunday
-        w(6, "Service day — live stories + photo coverage", "", "media"),
+        // Editing team — weekly standing tasks (no fixed day)
+        c("editing", "Edit Spotify"),
+        c("editing", "Post Spotify"),
+        c("editing", "Edit YouTube"),
+        c("editing", "Post YouTube"),
+        // Media team starts with a blank weekly shoot list — added in-app.
       ],
       completions: [],
       projects: [
@@ -221,6 +226,8 @@ window.Store = (() => {
   // ----- items -----
   function itemRow(it) {
     const recurring = !!it.recurring;
+    let asset_url = (it.asset_url || "").trim();
+    if (asset_url && !/^https?:\/\//i.test(asset_url)) asset_url = "https://" + asset_url;
     return {
       id: it.id,
       account: it.account || "main",
@@ -228,6 +235,7 @@ window.Store = (() => {
       notes: it.notes || "",
       branch: it.branch,
       assignee: it.assignee || "",
+      asset_url,
       recurring,
       recur: recurring ? it.recur || "weekly" : null,
       dow: recurring ? it.dow : null,
@@ -318,6 +326,7 @@ window.Store = (() => {
     if (sb) {
       const { error } = await sb.from("projects").insert(r);
       if (error) return remoteFail(error);
+      if (r.assignee) notifyAssignee(r.assignee, "New project assigned to you", r.title);
       return afterRemoteWrite();
     }
     state.projects.push(r);
@@ -329,9 +338,12 @@ window.Store = (() => {
     const current = state.projects.find((r) => r.id === id);
     if (!current) return;
     const next = projectRow(Object.assign({}, current, fields, { id }));
+    const assigneeChanged =
+      next.assignee && next.assignee.toLowerCase() !== (current.assignee || "").toLowerCase();
     if (sb) {
       const { error } = await sb.from("projects").update(next).eq("id", id);
       if (error) return remoteFail(error);
+      if (assigneeChanged) notifyAssignee(next.assignee, "Project assigned to you", next.title);
       return afterRemoteWrite();
     }
     Object.assign(current, next);
@@ -378,6 +390,7 @@ window.Store = (() => {
             .upsert({ account: acct, week_start: weekStartStr, assignee }, { onConflict: "account,week_start" })
         : await sb.from("week_assignments").delete().eq("account", acct).eq("week_start", weekStartStr);
       if (error) return remoteFail(error);
+      if (assignee) notifyAssignee(assignee, "You're on posting duty this week", "Week of " + weekStartStr);
       return afterRemoteWrite();
     }
     state.week_assignments = state.week_assignments.filter(
@@ -466,6 +479,7 @@ window.Store = (() => {
       title: r.title,
       details: r.details || "",
       requested_by: r.requested_by || "",
+      due_date: r.due_date || null, // "required by"
       status: r.status || "pending", // pending | approved | declined
     };
   }
@@ -507,6 +521,57 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- web push (closed-app notifications) -----
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  // Subscribe THIS device to push and store it against the person's name, so a
+  // later assignment to that name reaches every device they've enabled.
+  async function enablePush(name) {
+    const cfg = window.EXPRESSION_CONFIG || {};
+    if (!sb) return { ok: false, reason: "Team sync must be on." };
+    if (!cfg.VAPID_PUBLIC_KEY) return { ok: false, reason: "Push isn't configured yet." };
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      return { ok: false, reason: "This browser doesn't support push notifications." };
+    }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(cfg.VAPID_PUBLIC_KEY),
+      });
+      const j = sub.toJSON();
+      const row = {
+        name: (name || "").trim().toLowerCase(),
+        endpoint: j.endpoint,
+        p256dh: j.keys.p256dh,
+        auth: j.keys.auth,
+      };
+      const { error } = await sb.from("push_subscriptions").upsert(row, { onConflict: "endpoint" });
+      if (error) return { ok: false, reason: error.message };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: (e && e.message) || String(e) };
+    }
+  }
+
+  // Ask the Supabase Edge Function to push to everyone registered under `name`.
+  // Fire-and-forget: if push isn't set up yet, this fails quietly.
+  function notifyAssignee(name, title, body) {
+    if (!sb || !name) return;
+    sb.functions
+      .invoke("NOTIFY", {
+        body: { name: String(name).trim().toLowerCase(), title, body: body || "", url: "./" },
+      })
+      .catch((e) => console.error("push notify failed:", e));
+  }
+
   return {
     init,
     onChange,
@@ -531,5 +596,6 @@ window.Store = (() => {
     addRequest,
     updateRequest,
     deleteRequest,
+    enablePush,
   };
 })();

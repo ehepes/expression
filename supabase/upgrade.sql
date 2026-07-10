@@ -47,9 +47,14 @@ create table if not exists requests (
   title text not null,
   details text not null default '',
   requested_by text not null default '',
+  due_date date,
   status text not null default 'pending',
   created_at timestamptz not null default now()
 );
+-- If the requests table already existed without it, add the date column.
+alter table requests add column if not exists due_date date;
+-- Asset/Drive link per calendar item.
+alter table items add column if not exists asset_url text not null default '';
 
 alter table members enable row level security;
 alter table week_assignments enable row level security;

@@ -6,17 +6,24 @@ It covers the three branches of the team:
 | Branch | What it does in the app |
 |---|---|
 | **Social Media Team** | Weekly Instagram posting calendar with daily check-offs |
-| **Photo & Media Team** | Photography / filming tasks on the same calendar |
-| **Editing Team** | YouTube & Spotify tasks (uploads, podcast cuts) |
+| **Photo & Media Team** | Weekly checklist — standing or one-off shoot tasks |
+| **Editing Team** | Weekly checklist — YouTube & Spotify tasks |
+| **Graphics Team** | Weekly checklist — design tasks; also receives Projects |
 
 **Features**
 
-- **Week view** — see everything that needs to happen each day of the week,
-  tick items off as they're done, flip between weeks, or tap the date range
-  to jump straight to any week or month. Posts can be one-off, weekly, or
-  monthly (e.g. "3rd Wednesday"). When editing a recurring post you choose
-  the scope: **just this week**, **this week and all future weeks**, or
-  **every week** — so one-off tweaks never disturb the standing schedule.
+- **Week view** — pick a team from the chips; each shows the format that fits:
+  - **Social** — a daily Mon–Sun calendar. Tick posts off, flip between weeks,
+    or tap the date range to jump to any week. Posts can be one-off, weekly, or
+    monthly (e.g. "3rd Wednesday"); when editing a recurring post you choose the
+    scope (**just this week**, **future weeks**, or **every week**).
+  - **Media**, **Editing** & **Graphics** — a weekly checklist (not daily).
+    Each task is either **standing** (appears every week, ticked off once per
+    week) or **one-off** (just the week you add it to). Editing
+    starts with Edit/Post Spotify and Edit/Post YouTube; Media starts blank for
+    your Sunday shoot list. Add or remove tasks any time.
+  - **Graphics** — a weekly checklist like Media/Editing; bigger pieces can
+    also be tracked as Projects.
 - **Projects pipeline** — capture ideas, assign them to people, set a
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices
@@ -34,7 +41,10 @@ It covers the three branches of the team:
   into the Projects pipeline (then assign it), or decline it.
 - **Quick links** — a 🔗 button by the header opens shared links (Google
   Drive, Canva, folders…) that the whole team can add and edit.
-- **Teams view** — each branch's weekly progress and task list at a glance.
+- **Today** — the home screen the app opens to: today's posts with quick
+  check-off, who's on posting duty this week, an **Assigned to you** list
+  (your projects and this week's tasks, based on the name you set in Settings),
+  projects due soon (or overdue), and a nudge when requests await approval.
 - **Accounts** — separate content plans for Main Church, YA, YTH and HER,
   switchable from the dropdown under the header.
 - Works on any phone or laptop from a link; installable like a real app
@@ -102,7 +112,8 @@ It gets its own icon, opens full-screen, and works offline.
   day; tap the row to edit or delete it.
 - **Projects** tab: **+ New project** to capture an idea. Assign someone,
   set a "required by" date, and use **Move to …** to advance it.
-- **Teams** tab: each branch's weekly progress, plus quick add per team.
+- **Today** tab: the home screen — today's posts, this week's posting duty,
+  projects due soon, and pending requests, all at a glance.
 
 The app ships with the **Main Church standard weekly Instagram schedule**
 (from the team's posting calendar) plus the Special Reels Tracker projects.

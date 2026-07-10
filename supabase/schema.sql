@@ -10,8 +10,9 @@ create table if not exists items (
   account text not null default 'main',
   title text not null,
   notes text not null default '',
-  branch text not null default 'social', -- social | media | editing
+  branch text not null default 'social', -- social | media | editing | graphics
   assignee text not null default '',
+  asset_url text not null default '',
   recurring boolean not null default false,
   recur text check (recur in ('weekly', 'monthly')),
   dow int check (dow between 0 and 6),
@@ -87,9 +88,21 @@ create table if not exists requests (
   title text not null,
   details text not null default '',
   requested_by text not null default '',
+  due_date date, -- "required by"
   status text not null default 'pending', -- pending | approved | declined
   created_at timestamptz not null default now()
 );
+
+-- Devices opted in to closed-app push, tied to a person's name (lowercased).
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_name_idx on push_subscriptions (name);
 
 -- The app is shared via a private link with a small trusted team, so the
 -- anon key gets full read/write. Don't post the app link publicly.
@@ -101,6 +114,7 @@ alter table week_assignments enable row level security;
 alter table item_exceptions enable row level security;
 alter table links enable row level security;
 alter table requests enable row level security;
+alter table push_subscriptions enable row level security;
 
 create policy "team access" on items for all using (true) with check (true);
 create policy "team access" on completions for all using (true) with check (true);
@@ -110,6 +124,7 @@ create policy "team access" on week_assignments for all using (true) with check 
 create policy "team access" on item_exceptions for all using (true) with check (true);
 create policy "team access" on links for all using (true) with check (true);
 create policy "team access" on requests for all using (true) with check (true);
+create policy "team access" on push_subscriptions for all using (true) with check (true);
 
 -- Live updates: when one person changes something, everyone else sees it.
 alter publication supabase_realtime add table items;
@@ -130,12 +145,10 @@ insert into items (account, title, notes, branch, recurring, recur, dow, nth) va
   ('main', 'Story Recap', 'Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00', 'social', true, 'weekly', 0, null),
   ('main', 'Invite to Prayer Story', 'Use video from drive · 08:00–10:00', 'social', true, 'weekly', 0, null),
   ('main', 'Sunday Reel', 'Include engagement sticker (poll/question) · 08:00–10:00', 'social', true, 'weekly', 0, null),
-  ('main', 'Upload Sunday sermon to YouTube', '', 'editing', true, 'weekly', 0, null),
   -- Tuesday
   ('main', 'Prayer Story', 'Scripture + prayer prompt + question sticker · 08:00–10:00', 'social', true, 'weekly', 1, null),
   ('main', 'Podcast/YT Promo Story', '20-sec audiogram + subtitles + CTA: Listen on Spotify · 08:00–10:00', 'social', true, 'weekly', 1, null),
   ('main', 'Expect Group Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 1, null),
-  ('main', 'Cut sermon highlights for Spotify podcast', '', 'editing', true, 'weekly', 1, null),
   -- Wednesday
   ('main', 'Expect Socials Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 2, null),
   ('main', 'Join a Team Story', 'Real face + 10-sec testimony + poll: Want info? · 08:00–10:00', 'social', true, 'weekly', 2, null),
@@ -153,8 +166,12 @@ insert into items (account, title, notes, branch, recurring, recur, dow, nth) va
   -- Saturday
   ('main', 'Encouragement Carousel', 'Hook + Scripture + why Sunday matters + service time · 10:00', 'social', true, 'weekly', 5, null),
   ('main', 'Countdown Story', 'Who are you bringing? + location + parking · 10:00', 'social', true, 'weekly', 5, null),
-  -- Sunday
-  ('main', 'Service day — live stories + photo coverage', '', 'media', true, 'weekly', 6, null);
+  -- Editing team — weekly standing tasks (no fixed day; ticked once per week)
+  ('main', 'Edit Spotify', '', 'editing', true, 'weekly', null, null),
+  ('main', 'Post Spotify', '', 'editing', true, 'weekly', null, null),
+  ('main', 'Edit YouTube', '', 'editing', true, 'weekly', null, null),
+  ('main', 'Post YouTube', '', 'editing', true, 'weekly', null, null);
+-- Media team starts with a blank weekly shoot list — built in-app.
 
 -- Projects from the Special Reels Tracker.
 insert into projects (account, title, notes, assignee, status, due_date) values

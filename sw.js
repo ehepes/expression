@@ -1,5 +1,7 @@
-/* Offline support: cache the app shell, refresh it in the background. */
-const CACHE = "expression-v9";
+/* Offline support. Network-first: when online you always get the latest
+   files (no more stale app after a deploy); when offline you fall back to
+   the cached copy. */
+const CACHE = "expression-v17";
 const ASSETS = [
   "./",
   "./index.html",
@@ -31,17 +33,47 @@ self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== "GET" || url.origin !== self.location.origin) return;
   e.respondWith(
-    caches.match(e.request).then((cached) => {
-      const fresh = fetch(e.request)
-        .then((res) => {
-          if (res.ok) {
-            const copy = res.clone();
-            caches.open(CACHE).then((c) => c.put(e.request, copy));
-          }
-          return res;
-        })
-        .catch(() => cached);
-      return cached || fresh;
+    fetch(e.request)
+      .then((res) => {
+        if (res.ok) {
+          const copy = res.clone();
+          caches.open(CACHE).then((c) => c.put(e.request, copy));
+        }
+        return res;
+      })
+      .catch(() => caches.match(e.request))
+  );
+});
+
+// ----- Web Push: show a notification even when the app is closed -----
+self.addEventListener("push", (e) => {
+  let data = {};
+  try {
+    data = e.data ? e.data.json() : {};
+  } catch (_) {
+    data = { title: "Expression", body: e.data ? e.data.text() : "" };
+  }
+  const title = data.title || "Expression";
+  e.waitUntil(
+    self.registration.showNotification(title, {
+      body: data.body || "",
+      icon: "icons/icon-192.png",
+      badge: "icons/icon-192.png",
+      data: { url: data.url || "./" },
+    })
+  );
+});
+
+// Tapping the notification focuses the app (or opens it).
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "./";
+  e.waitUntil(
+    clients.matchAll({ type: "window", includeUncontrolled: true }).then((wins) => {
+      for (const w of wins) {
+        if ("focus" in w) return w.focus();
+      }
+      if (clients.openWindow) return clients.openWindow(url);
     })
   );
 });

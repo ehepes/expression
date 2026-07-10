@@ -7,11 +7,19 @@ const ACCOUNTS = {
   her: "HER",
 };
 
+// Each team is shown in the format that suits it:
+//   calendar  — a daily Mon–Sun schedule (Social posts every day)
+//   checklist — a weekly list, standing or one-off (Media, Editing, Graphics)
 const BRANCHES = {
-  social: { name: "Social Media Team", short: "Social", color: "#3B82F6", desc: "Instagram posts, stories & captions" },
-  media: { name: "Photo & Media Team", short: "Media", color: "#8B5CF6", desc: "Photography, filming & visuals" },
-  editing: { name: "Editing Team", short: "Editing", color: "#10B981", desc: "YouTube & Spotify content" },
+  social: { name: "Social Media Team", short: "Social", color: "#3B82F6", desc: "Instagram posts, stories & captions", kind: "calendar" },
+  media: { name: "Photo & Media Team", short: "Media", color: "#8B5CF6", desc: "Weekly shoot list for Sunday", kind: "checklist" },
+  editing: { name: "Editing Team", short: "Editing", color: "#10B981", desc: "Weekly YouTube & Spotify tasks", kind: "checklist" },
+  graphics: { name: "Graphics Team", short: "Graphics", color: "#F59E0B", desc: "Design tasks & weekly to-dos", kind: "checklist" },
 };
+
+function branchKind(b) {
+  return (BRANCHES[b] || {}).kind || "calendar";
+}
 
 const PROJECT_STATUSES = [
   ["idea", "Idea"],
@@ -48,10 +56,10 @@ function setPrefs(patch) {
 }
 
 // ----- app state -----
-let tab = ["week", "projects", "requests", "teams"].includes(location.hash.slice(1))
+let tab = ["today", "week", "projects", "requests"].includes(location.hash.slice(1))
   ? location.hash.slice(1)
-  : "week";
-let branchFilter = "all";
+  : "today";
+let branchFilter = "social"; // which team is selected on the Week tab
 let weekStart = startOfWeek(new Date());
 let account = ACCOUNTS[getPrefs().account] ? getPrefs().account : "main";
 
@@ -116,6 +124,9 @@ function accountProjects() {
 function itemsForDate(date) {
   const dateStr = ymd(date);
   return accountItems().filter((it) => {
+    // The daily calendar is for calendar-kind teams only; checklist teams
+    // (Media/Editing/Graphics) live in their own weekly list.
+    if (branchKind(it.branch) !== "calendar") return false;
     if (branchFilter !== "all" && it.branch !== branchFilter) return false;
     return showsOn(it, date, dateStr);
   });
@@ -128,6 +139,7 @@ function weekStats(filterBranch) {
     const date = addDays(weekStart, i);
     const dateStr = ymd(date);
     accountItems().forEach((it) => {
+      if (branchKind(it.branch) !== "calendar") return;
       if (filterBranch && it.branch !== filterBranch) return;
       if (branchFilter !== "all" && !filterBranch && it.branch !== branchFilter) return;
       if (!showsOn(it, date, dateStr)) return;
@@ -160,7 +172,7 @@ function render() {
   if (tab === "week") view.innerHTML = renderWeek();
   else if (tab === "projects") view.innerHTML = renderProjects();
   else if (tab === "requests") view.innerHTML = renderRequests();
-  else view.innerHTML = renderTeams();
+  else view.innerHTML = renderToday();
 }
 
 // Little count bubble on the Requests tab when there are pending requests.
@@ -225,15 +237,12 @@ function weekNavHtml() {
 }
 
 function chipsHtml() {
-  const chips = [["all", "All teams"]].concat(
-    Object.entries(BRANCHES).map(([k, b]) => [k, b.short])
-  );
   return (
     '<div class="chips">' +
-    chips
+    Object.entries(BRANCHES)
       .map(
-        ([k, label]) =>
-          `<button class="chip ${branchFilter === k ? "active" : ""}" data-action="filter" data-branch="${k}">${label}</button>`
+        ([k, b]) =>
+          `<button class="chip ${branchFilter === k ? "active" : ""}" data-action="filter" data-branch="${k}">${esc(b.short)}</button>`
       )
       .join("") +
     "</div>"
@@ -242,6 +251,7 @@ function chipsHtml() {
 
 function taskRowHtml(it, dateStr) {
   const done = Store.isDone(it.id, dateStr);
+  const isToday = dateStr === ymd(new Date());
   const b = BRANCHES[it.branch] || BRANCHES.social;
   const rep = repeatLabel(it);
   const meta = [
@@ -251,17 +261,31 @@ function taskRowHtml(it, dateStr) {
   ]
     .filter(Boolean)
     .join("");
+  const notesPreview = it.notes ? `<div class="task-preview">${esc(it.notes)}</div>` : "";
+  const assetLink = it.asset_url
+    ? `<a class="task-asset" href="${esc(it.asset_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open asset link">&#128279;</a>`
+    : "";
   return `
-    <div class="task ${done ? "done-row" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${dateStr}">
+    <div class="task ${done ? "done-row" : ""}${isToday ? " today-task" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${dateStr}">
       <button class="checkbox ${done ? "done" : ""}" data-action="toggle-done" data-id="${it.id}" data-date="${dateStr}" aria-label="Mark done">&#10003;</button>
       <div class="task-main">
         <div class="task-title">${esc(it.title)}</div>
         <div class="task-meta">${meta}</div>
+        ${notesPreview}
       </div>
+      ${assetLink}
     </div>`;
 }
 
+// The Week tab routes to the format that fits the selected team.
 function renderWeek() {
+  const kind = branchKind(branchFilter);
+  const body = kind === "checklist" ? renderChecklist(branchFilter) : renderCalendar();
+  return `${weekNavHtml()}${chipsHtml()}${body}`;
+}
+
+// Social: the full daily Mon–Sun calendar with posting duty and progress.
+function renderCalendar() {
   const today = ymd(new Date());
   const { total, done } = weekStats();
   const pct = total ? Math.round((done / total) * 100) : 0;
@@ -289,14 +313,83 @@ function renderWeek() {
   }
 
   return `
-    ${weekNavHtml()}
-    ${chipsHtml()}
     <div class="progress-card">
       <div class="label"><span>This week · ${esc(ACCOUNTS[account])}</span><span>${done} of ${total} done</span></div>
       <div class="bar"><span style="width:${pct}%"></span></div>
     </div>
     ${weekAssignHtml()}
     ${days}`;
+}
+
+// Media / Editing / Graphics: a weekly list. Items are either standing (recur
+// every week, ticked off once per week, completion keyed to the week's Monday)
+// or one-off (a task for a single week, keyed to its own date). Edit the list
+// via Add / tap-to-edit / delete.
+function checklistRowHtml(it, key) {
+  const done = Store.isDone(it.id, key);
+  const assetLink = it.asset_url
+    ? `<a class="task-asset" href="${esc(it.asset_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open asset link">&#128279;</a>`
+    : "";
+  const meta = [
+    it.assignee ? `<span>&#128100; ${esc(it.assignee)}</span>` : "",
+    !it.recurring ? `<span class="repeat-tag">&#128197; this week only</span>` : "",
+  ]
+    .filter(Boolean)
+    .join("");
+  return `
+    <div class="task ${done ? "done-row" : ""}" data-action="edit-item" data-id="${it.id}" data-date="${key}">
+      <button class="checkbox ${done ? "done" : ""}" data-action="toggle-done" data-id="${it.id}" data-date="${key}" aria-label="Mark done">&#10003;</button>
+      <div class="task-main">
+        <div class="task-title">${esc(it.title)}</div>
+        ${meta ? `<div class="task-meta">${meta}</div>` : ""}
+        ${it.notes ? `<div class="task-preview">${esc(it.notes)}</div>` : ""}
+      </div>
+      ${assetLink}
+    </div>`;
+}
+
+// Standing items show every week; one-off items only in the week they belong to.
+function checklistItemsForWeek(branch, wkStr, wkEnd) {
+  return accountItems()
+    .filter((it) => it.branch === branch)
+    .filter((it) => {
+      if (it.recurring) {
+        if (it.start_date && wkEnd < it.start_date) return false;
+        if (it.end_date && wkStr > it.end_date) return false;
+        return true;
+      }
+      return it.date >= wkStr && it.date <= wkEnd;
+    });
+}
+
+// Completion key: standing items tick per week (Monday); one-off by their date.
+function checklistKey(it, wkStr) {
+  return it.recurring ? wkStr : it.date;
+}
+
+function renderChecklist(branch) {
+  const b = BRANCHES[branch];
+  const wkStr = ymd(weekStart);
+  const wkEnd = ymd(addDays(weekStart, 6));
+  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
+  const items = checklistItemsForWeek(branch, wkStr, wkEnd);
+  const done = items.filter((it) => Store.isDone(it.id, checklistKey(it, wkStr))).length;
+  const total = items.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+
+  const list = total
+    ? `<div class="day-card today-tasks">${items
+        .map((it) => checklistRowHtml(it, checklistKey(it, wkStr)))
+        .join("")}</div>`
+    : `<div class="empty-state">No tasks for ${esc(b.short)} this week.<br/>Tap <b>+ Add task</b> for a standing (every week) or one-off task.</div>`;
+
+  return `
+    <div class="progress-card">
+      <div class="label"><span>${esc(b.name)} · week of ${range}</span><span>${done} of ${total} done</span></div>
+      <div class="bar"><span style="width:${pct}%"></span></div>
+    </div>
+    ${list}
+    <button class="list-add" data-action="add-item" data-branch="${branch}">+ Add task</button>`;
 }
 
 function weekAssignee() {
@@ -393,40 +486,188 @@ function projectCardHtml(r) {
     </div>`;
 }
 
-function renderTeams() {
-  const today = ymd(new Date());
-  let cards = "";
-  Object.entries(BRANCHES).forEach(([key, b]) => {
-    const { total, done } = weekStats(key);
-    const pct = total ? Math.round((done / total) * 100) : 0;
+// Whole-number days from today to a yyyy-mm-dd date (negative = in the past).
+function daysUntil(dateStr) {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const target = new Date(y, m - 1, d);
+  const now = new Date();
+  const t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((target - t0) / 86400000);
+}
 
-    let rows = "";
-    for (let i = 0; i < 7; i++) {
-      const date = addDays(weekStart, i);
-      const dateStr = ymd(date);
-      accountItems()
-        .filter((it) => it.branch === key && showsOn(it, date, dateStr))
-        .forEach((it) => {
-          rows += taskRowHtml(it, dateStr);
-        });
-    }
+// Who is on posting duty for the actual current week (independent of whatever
+// week the Week tab is currently parked on).
+function currentWeekAssignee() {
+  const ws = ymd(startOfWeek(new Date()));
+  const wa = Store.get().week_assignments.find(
+    (w) => (w.account || "main") === account && w.week_start === ws
+  );
+  return wa ? wa.assignee : "";
+}
 
-    cards += `
-      <div class="team-card">
-        <div class="team-head" style="background:linear-gradient(135deg, ${b.color}, ${b.color}CC)">
-          <h3>${b.name}</h3>
-          <p>${b.desc}</p>
-        </div>
-        <div class="team-body">
-          <div class="team-stats"><span>This week</span><span>${done} / ${total} done (${pct}%)</span></div>
-          <div class="bar"><span style="width:${pct}%"></span></div>
-          ${rows || '<div class="day-empty" style="padding:12px 0 0">No tasks this week.</div>'}
-          <button class="team-add" data-action="add-item" data-branch="${key}" data-date="${today}">+ Add task for this team</button>
-        </div>
-      </div>`;
+function dueSoonRowHtml(r, days) {
+  const label =
+    days < 0 ? `${-days}d overdue` : days === 0 ? "Today" : days === 1 ? "Tomorrow" : `${days} days`;
+  const cls = days < 0 ? "overdue" : days <= 1 ? "soon" : "";
+  const statusLabel = (PROJECT_STATUSES.find(([k]) => k === r.status) || ["", ""])[1];
+  return `
+    <div class="due-row" data-action="edit-project" data-id="${r.id}">
+      <div class="due-main">
+        <div class="due-title">${esc(r.title)}</div>
+        <div class="due-meta">${r.assignee ? "&#128100; " + esc(r.assignee) : "Unassigned"} &middot; ${esc(statusLabel)}</div>
+      </div>
+      <span class="due-badge ${cls}">${label}</span>
+    </div>`;
+}
+
+// Everything assigned to the person whose name is set on this device (Settings).
+// Projects span all accounts; items are this week's, in the current account.
+function assignedToMe() {
+  const me = (getPrefs().myName || "").trim().toLowerCase();
+  if (!me) return null;
+  const projects = Store.get()
+    .projects.filter((p) => (p.assignee || "").trim().toLowerCase() === me && (p.status || "idea") !== "posted")
+    .sort((a, b) => (a.due_date || "9999").localeCompare(b.due_date || "9999"));
+  const cw = startOfWeek(new Date());
+  const wkStr = ymd(cw);
+  const wkEnd = ymd(addDays(cw, 6));
+  const items = accountItems()
+    .filter((it) => (it.assignee || "").trim().toLowerCase() === me)
+    .filter((it) => {
+      if (branchKind(it.branch) === "calendar") {
+        if (!it.recurring) return it.date >= wkStr && it.date <= wkEnd;
+        for (let i = 0; i < 7; i++) {
+          const d = addDays(cw, i);
+          if (showsOn(it, d, ymd(d))) return true;
+        }
+        return false;
+      }
+      if (it.recurring) {
+        if (it.start_date && wkEnd < it.start_date) return false;
+        if (it.end_date && wkStr > it.end_date) return false;
+        return true;
+      }
+      return it.date >= wkStr && it.date <= wkEnd;
+    });
+  return { projects, items };
+}
+
+function assignedProjectRowHtml(p) {
+  const days = p.due_date ? daysUntil(p.due_date) : null;
+  let badge = "";
+  if (days !== null) {
+    const cls = days < 0 ? "overdue" : days <= 1 ? "soon" : "";
+    const label = days < 0 ? `${-days}d overdue` : days === 0 ? "Today" : days === 1 ? "Tomorrow" : `${days}d`;
+    badge = `<span class="due-badge ${cls}">${label}</span>`;
+  }
+  const statusLabel = (PROJECT_STATUSES.find(([k]) => k === p.status) || ["", ""])[1];
+  return `
+    <div class="due-row" data-action="edit-project" data-id="${p.id}">
+      <div class="due-main">
+        <div class="due-title">${esc(p.title)}</div>
+        <div class="due-meta"><span class="acct-tag">${esc(ACCOUNTS[p.account || "main"])}</span> &middot; ${esc(statusLabel)}</div>
+      </div>
+      ${badge}
+    </div>`;
+}
+
+function assignedItemRowHtml(it) {
+  const b = BRANCHES[it.branch] || BRANCHES.social;
+  const extra =
+    branchKind(it.branch) === "calendar" && it.recurring
+      ? " &middot; " + repeatLabel(it)
+      : branchKind(it.branch) === "checklist" && !it.recurring
+        ? " &middot; this week"
+        : "";
+  return `
+    <div class="due-row" data-action="edit-item" data-id="${it.id}">
+      <div class="due-main">
+        <div class="due-title">${esc(it.title)}</div>
+        <div class="due-meta"><span class="bdot" style="background:${b.color}"></span> ${esc(b.short)}${extra}</div>
+      </div>
+    </div>`;
+}
+
+// The home screen: a single glance at "what matters today".
+function renderToday() {
+  const now = new Date();
+  const todayStr = ymd(now);
+  const dateLabel = now.toLocaleDateString(undefined, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
   });
 
-  return `${weekNavHtml()}${cards}`;
+  // Today's posts: the daily (Social) calendar only — checklist teams live in
+  // their own weekly list, not the day-by-day view.
+  const todayItems = accountItems().filter(
+    (it) => branchKind(it.branch) === "calendar" && showsOn(it, now, todayStr)
+  );
+  const done = todayItems.filter((it) => Store.isDone(it.id, todayStr)).length;
+  const total = todayItems.length;
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  const tasksHtml = total
+    ? todayItems.map((it) => taskRowHtml(it, todayStr)).join("")
+    : '<div class="day-empty">Nothing scheduled for today — enjoy the breather.</div>';
+
+  // Posting duty for this (real) week.
+  const who = currentWeekAssignee();
+  const dutyHtml = `
+    <button type="button" class="week-assign ${who ? "" : "unset"}" data-action="assign-week-current">
+      <span>&#128100; Posting this week:</span>
+      <b>${who ? esc(who) : "no one yet"}</b>
+      <span class="assign-link">${who ? "Change" : "Assign"}</span>
+    </button>`;
+
+  // Coming up: current-account projects due within a week (or overdue), still open.
+  const soon = accountProjects()
+    .filter((r) => r.due_date && r.status !== "posted")
+    .map((r) => ({ r, days: daysUntil(r.due_date) }))
+    .filter((x) => x.days <= 7)
+    .sort((a, b) => a.days - b.days);
+  const soonHtml = soon.length
+    ? `<div class="section-title">Coming up</div>${soon.map((x) => dueSoonRowHtml(x.r, x.days)).join("")}`
+    : "";
+
+  // Assigned to you: driven by the name set in Settings on this device.
+  const mine = assignedToMe();
+  let assignedHtml = "";
+  if (!mine) {
+    assignedHtml = `
+      <button type="button" class="today-alert" data-action="settings">
+        <span>&#128100; Set your name to see what's assigned to you</span>
+        <span class="assign-link">Settings &#8594;</span>
+      </button>`;
+  } else if (mine.projects.length || mine.items.length) {
+    assignedHtml = `
+      <div class="section-title">Assigned to you</div>
+      ${mine.projects.map(assignedProjectRowHtml).join("")}
+      ${mine.items.map(assignedItemRowHtml).join("")}`;
+  }
+
+  // Requests is a shared inbox — surface the pending count from any account.
+  const pending = Store.get().requests.filter((r) => (r.status || "pending") === "pending").length;
+  const reqHtml = pending
+    ? `<button type="button" class="today-alert" data-action="tab" data-tab="requests">
+         <span>&#128229; ${pending} request${pending === 1 ? "" : "s"} awaiting approval</span>
+         <span class="assign-link">Review &#8594;</span>
+       </button>`
+    : "";
+
+  return `
+    <div class="today-hero">
+      <div class="today-date">${dateLabel}</div>
+      <div class="today-sub">${esc(ACCOUNTS[account])}</div>
+    </div>
+    ${dutyHtml}
+    ${reqHtml}
+    ${assignedHtml}
+    <div class="progress-card">
+      <div class="label"><span>Today's posts</span><span>${done} of ${total} done</span></div>
+      <div class="bar"><span style="width:${pct}%"></span></div>
+    </div>
+    <div class="day-card today-tasks">${tasksHtml}</div>
+    ${soonHtml}`;
 }
 
 // ----- modals -----
@@ -483,6 +724,9 @@ function openItemModal(opts) {
     date: opts.date || ymd(new Date()),
   };
   const schedule = !it.recurring ? "once" : (it.recur || "weekly") === "monthly" ? "monthly" : "weekly";
+  // Checklist chooser: new items default to a standing (every-week) task.
+  const clSchedule = !editing ? "standing" : it.recurring ? "standing" : "once";
+  const range = `${fmtShort(weekStart)} – ${fmtShort(addDays(weekStart, 6))}`;
   const branchOpts = Object.entries(BRANCHES)
     .map(([k, b]) => `<option value="${k}" ${it.branch === k ? "selected" : ""}>${b.name}</option>`)
     .join("");
@@ -514,6 +758,10 @@ function openItemModal(opts) {
           <textarea name="notes" maxlength="2000" placeholder="Caption ideas, links, details… (optional)">${esc(it.notes)}</textarea>
         </div>
         <div class="field">
+          <label>Asset / Drive link</label>
+          <input type="text" name="asset_url" maxlength="500" value="${esc(it.asset_url || '')}" placeholder="Drive folder, Canva link… (optional)" />
+        </div>
+        <div class="field" id="schedule-wrap">
           <label>When</label>
           <div class="radio-row">
             <label><input type="radio" name="schedule" value="once" ${schedule === "once" ? "checked" : ""}/> One date</label>
@@ -526,9 +774,18 @@ function openItemModal(opts) {
             <select name="dow">${dayOpts}</select>
           </div>
         </div>
+        <div class="field" id="checklist-sched" style="display:none">
+          <label>How often</label>
+          <div class="radio-row">
+            <label><input type="radio" name="clsched" value="standing" ${clSchedule === "standing" ? "checked" : ""}/> Every week</label>
+            <label><input type="radio" name="clsched" value="once" ${clSchedule === "once" ? "checked" : ""}/> Just one week</label>
+          </div>
+          <p class="hint" id="cl-standing-hint">A standing task — appears on the list every week, ticked off once per week.</p>
+          <p class="hint" id="cl-once-hint" style="display:none">A one-off for the week of <b>${range}</b> only.</p>
+        </div>
         ${
           editing && editing.recurring
-            ? `<div class="field scope-field">
+            ? `<div class="field scope-field" id="scope-wrap">
                  <label>Apply this change to</label>
                  <div class="radio-col">
                    <label><input type="radio" name="scope" value="one" checked /> <span><b>Just this week</b> — other weeks stay the same</span></label>
@@ -542,7 +799,7 @@ function openItemModal(opts) {
           ${
             editing
               ? `<button type="button" class="danger-btn" data-action="delete-item" data-id="${editing.id}" data-date="${esc(opts.date || "")}">Delete</button>` +
-                (editing.recurring
+                (editing.recurring && branchKind(editing.branch) === "calendar"
                   ? `<button type="button" class="ghost-btn" data-action="stop-item" data-id="${editing.id}" title="Keeps past weeks, removes it from this week onward">Stop future weeks</button>`
                   : "")
               : ""
@@ -555,36 +812,83 @@ function openItemModal(opts) {
 
   const form = document.getElementById("item-form");
   wireAssigneeField(form);
+  const scheduleWrap = form.querySelector("#schedule-wrap");
+  const scopeWrap = form.querySelector("#scope-wrap");
+  const checklistSched = form.querySelector("#checklist-sched");
+  const clStandingHint = form.querySelector("#cl-standing-hint");
+  const clOnceHint = form.querySelector("#cl-once-hint");
   const syncScheduleFields = () => {
     const s = form.schedule.value;
     form.date.style.display = s === "once" ? "block" : "none";
     form.querySelector(".row-2").style.display = s === "once" ? "none" : "flex";
     form.nth.style.display = s === "monthly" ? "block" : "none";
   };
+  const syncClSched = () => {
+    const once = form.clsched.value === "once";
+    clOnceHint.style.display = once ? "block" : "none";
+    clStandingHint.style.display = once ? "none" : "block";
+  };
+  // Calendar teams (Social) pick a day/recurrence; checklist teams (Media,
+  // Editing, Graphics) pick standing-every-week vs one-off-this-week.
+  const syncBranchMode = () => {
+    const isCal = branchKind(form.branch.value) === "calendar";
+    scheduleWrap.style.display = isCal ? "" : "none";
+    checklistSched.style.display = isCal ? "none" : "";
+    if (scopeWrap) scopeWrap.style.display = isCal ? "" : "none";
+    if (isCal) syncScheduleFields();
+    else syncClSched();
+  };
   form.querySelectorAll('input[name="schedule"]').forEach((radio) =>
     radio.addEventListener("change", syncScheduleFields)
   );
-  syncScheduleFields();
+  form.querySelectorAll('input[name="clsched"]').forEach((radio) =>
+    radio.addEventListener("change", syncClSched)
+  );
+  form.branch.addEventListener("change", syncBranchMode);
+  syncBranchMode();
 
   form.addEventListener("submit", (e) => {
     e.preventDefault();
+    const branch = form.branch.value;
+    const isCal = branchKind(branch) === "calendar";
     const s = form.schedule.value;
-    const fields = {
-      account,
-      title: form.title.value.trim(),
-      branch: form.branch.value,
-      assignee: readAssignee(form),
-      notes: form.notes.value.trim(),
-      recurring: s !== "once",
-      recur: s === "monthly" ? "monthly" : "weekly",
-      dow: s === "once" ? null : Number(form.dow.value),
-      nth: s === "monthly" ? Number(form.nth.value) : null,
-      date: s === "once" ? form.date.value || ymd(new Date()) : null,
-    };
+    const fields = isCal
+      ? {
+          account,
+          title: form.title.value.trim(),
+          branch,
+          assignee: readAssignee(form),
+          notes: form.notes.value.trim(),
+          asset_url: form.asset_url.value.trim(),
+          recurring: s !== "once",
+          recur: s === "monthly" ? "monthly" : "weekly",
+          dow: s === "once" ? null : Number(form.dow.value),
+          nth: s === "monthly" ? Number(form.nth.value) : null,
+          date: s === "once" ? form.date.value || ymd(new Date()) : null,
+        }
+      : (() => {
+          // Checklist task: standing (every week) or one-off (this week only).
+          const once = form.clsched.value === "once";
+          return {
+            account,
+            title: form.title.value.trim(),
+            branch,
+            assignee: readAssignee(form),
+            notes: form.notes.value.trim(),
+            asset_url: form.asset_url.value.trim(),
+            recurring: !once,
+            recur: "weekly",
+            dow: null,
+            nth: null,
+            date: once ? ymd(weekStart) : null,
+          };
+        })();
     if (!fields.title) return;
     if (editing) {
-      // Scope only applies when an existing recurring item stays recurring.
-      const scope = form.scope && editing.recurring && fields.recurring ? form.scope.value : "all";
+      // Scope only applies to calendar (Social) recurring items that stay
+      // recurring. Checklist tasks always update the standing definition.
+      const scope =
+        isCal && form.scope && editing.recurring && fields.recurring ? form.scope.value : "all";
       if (scope === "one") {
         // Override just this occurrence: hide the original on that date and
         // drop a one-off copy carrying the edited details.
@@ -666,7 +970,9 @@ function openProjectModal(id) {
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const fields = {
-      account,
+      // Keep an existing project in its own account (it may be edited from the
+      // cross-account "Assigned to you" list); new projects use the current one.
+      account: editing ? editing.account || "main" : account,
       title: form.title.value.trim(),
       notes: form.notes.value.trim(),
       assignee: readAssignee(form),
@@ -691,7 +997,7 @@ function openSettingsModal() {
         <div class="field">
           <label>Your name</label>
           <input type="text" name="myName" maxlength="80" value="${esc(prefs.myName || "")}" placeholder="So assignments can find you" />
-          <p class="hint">When a project is assigned to this name, this device gets a notification (needs team sync on and notifications allowed).</p>
+          <p class="hint">When a project or posting week is assigned to this name, every device you've enabled gets a notification — even when the app is closed (needs team sync on and notifications allowed).</p>
         </div>
         <div class="field">
           <button type="button" class="ghost-btn" data-action="enable-notifications" ${granted ? "disabled" : ""}>
@@ -710,6 +1016,10 @@ function openSettingsModal() {
     const myName = form.myName.value.trim();
     setPrefs({ myName });
     if (myName) Store.addMember(myName); // joins the shared assignment dropdown
+    // Keep this device's push subscription pointed at the current name.
+    if (myName && "Notification" in window && Notification.permission === "granted") {
+      Store.enablePush(myName);
+    }
     closeModal();
   });
 }
@@ -873,86 +1183,78 @@ function openLinkModal(id) {
 }
 
 // ----- requests -----
-const REQUEST_STATUS = { pending: "Pending", approved: "Approved", declined: "Declined" };
-
+// The tab only shows requests still awaiting approval. Approving one moves it
+// into Projects; declining removes it. So the tab stays clean.
 function renderRequests() {
-  const all = Store.get().requests;
-  const pending = all.filter((r) => (r.status || "pending") === "pending");
-  const handled = all.filter((r) => (r.status || "pending") !== "pending");
+  const pending = Store.get().requests.filter((r) => (r.status || "pending") === "pending");
 
-  const card = (r) => {
-    const acct = ACCOUNTS[r.account || "main"] || "Main Church";
-    const isPending = (r.status || "pending") === "pending";
-    return `
-      <div class="request-card ${isPending ? "" : "muted"}">
+  const cards = pending
+    .map((r) => {
+      const acct = ACCOUNTS[r.account || "main"] || "Main Church";
+      return `
+      <div class="request-card">
         <div class="request-top">
           <div class="request-title">${esc(r.title)}</div>
-          <span class="status-chip" style="background:${
-            r.status === "approved" ? STATUS_COLORS.ready : r.status === "declined" ? "#FFE9EF;color:#D03A6B" : "#EAF1FF;color:#1E5BD6"
-          }">${REQUEST_STATUS[r.status] || "Pending"}</span>
+          <span class="status-chip" style="background:#FFF1DF;color:#C26A00">Awaiting approval</span>
         </div>
         ${r.details ? `<div class="request-notes">${esc(r.details)}</div>` : ""}
         <div class="request-meta">
           <span>&#127991; ${esc(acct)}</span>
           ${r.requested_by ? `<span>&#128100; ${esc(r.requested_by)}</span>` : ""}
+          ${r.due_date ? `<span>&#128197; required by ${esc(r.due_date)}</span>` : ""}
         </div>
-        ${
-          isPending
-            ? `<div class="request-actions">
-                 <button class="advance-btn" data-action="approve-request" data-id="${r.id}">Approve &amp; add to projects &#8594;</button>
-                 <button class="ghost-btn small" data-action="decline-request" data-id="${r.id}">Decline</button>
-               </div>`
-            : `<div class="request-actions"><button class="ghost-btn small" data-action="delete-request" data-id="${r.id}">Remove</button></div>`
-        }
+        <div class="request-actions">
+          <button class="advance-btn" data-action="approve-request" data-id="${r.id}">Approve &#8594; move to Projects</button>
+          <button class="ghost-btn small" data-action="decline-request" data-id="${r.id}">Decline</button>
+        </div>
       </div>`;
-  };
-
-  let body = "";
-  body += pending.length
-    ? `<div class="section-title">To review · ${pending.length}</div>` + pending.map(card).join("")
-    : '<div class="empty-state">No requests waiting.<br/>Other teams can tap <b>New request</b> to ask for content.</div>';
-  if (handled.length) {
-    body += `<div class="section-title">Handled · ${handled.length}</div>` + handled.map(card).join("");
-  }
+    })
+    .join("");
 
   return `
     <div class="projects-head">
       <h2>Requests</h2>
       <button class="primary-btn" data-action="add-request">+ New request</button>
     </div>
-    <p class="hint" style="margin:-6px 0 14px">Anyone can request content or a project here. Approve to send it to the Projects pipeline, then assign it.</p>
-    ${body}`;
+    ${
+      pending.length
+        ? `<div class="section-title">Awaiting approval · ${pending.length}</div>${cards}`
+        : '<div class="empty-state">Nothing awaiting approval.<br/>Tap <b>New request</b> to ask for content or a project.</div>'
+    }`;
 }
 
-function openRequestModal(id) {
-  const editing = id ? Store.get().requests.find((r) => r.id === id) : null;
-  const r = editing || { title: "", details: "", requested_by: getPrefs().myName || "", account };
+function openRequestModal() {
+  const r = { title: "", details: "", requested_by: getPrefs().myName || "", account, due_date: "" };
   const acctOpts = Object.entries(ACCOUNTS)
-    .map(([k, name]) => `<option value="${k}" ${ (r.account || "main") === k ? "selected" : ""}>${name}</option>`)
+    .map(([k, name]) => `<option value="${k}" ${(r.account || "main") === k ? "selected" : ""}>${name}</option>`)
     .join("");
   document.getElementById("modal-root").innerHTML = `
     <div class="modal-overlay" data-action="close-modal">
       <form class="modal" id="request-form">
-        <h2>${editing ? "Edit request" : "New request"}</h2>
+        <h2>New request</h2>
         <div class="field">
           <label>What do you need?</label>
           <input type="text" name="title" required maxlength="200" value="${esc(r.title)}" placeholder="e.g. Reel to promote youth weekend" />
         </div>
         <div class="field">
-          <label>Details</label>
-          <textarea name="details" maxlength="2000" placeholder="Dates, key info, who/what, any references…">${esc(r.details)}</textarea>
+          <label>Which account</label>
+          <select name="account">${acctOpts}</select>
+        </div>
+        <div class="field">
+          <label>Required by</label>
+          <input type="date" name="due_date" value="${esc(r.due_date || "")}" />
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <textarea name="details" maxlength="2000" placeholder="Key info, who/what, references, anything that helps…">${esc(r.details)}</textarea>
         </div>
         <div class="field">
           <label>Your name</label>
           <input type="text" name="requested_by" maxlength="80" value="${esc(r.requested_by)}" placeholder="So we know who asked" />
         </div>
-        <div class="field">
-          <label>For which account</label>
-          <select name="account">${acctOpts}</select>
-        </div>
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
-          <button type="submit" class="primary-btn">${editing ? "Save" : "Send request"}</button>
+          <button type="submit" class="primary-btn">Send request</button>
         </div>
       </form>
     </div>`;
@@ -964,24 +1266,31 @@ function openRequestModal(id) {
       details: form.details.value.trim(),
       requested_by: form.requested_by.value.trim(),
       account: form.account.value,
+      due_date: form.due_date.value || null,
     };
     if (!fields.title) return;
-    if (editing) Store.updateRequest(editing.id, fields);
-    else Store.addRequest(fields);
+    Store.addRequest(fields); // lands as "awaiting approval"
     closeModal();
   });
   form.title.focus();
 }
 
-// Turn a request into a project (unassigned), then mark it approved.
+// Approve = turn the request into a project (unassigned) and remove it from
+// the requests list, so it has "moved" into Projects.
 function approveRequest(id) {
   const r = Store.get().requests.find((x) => x.id === id);
   if (!r) return;
   const notes = [r.details, r.requested_by ? `Requested by ${r.requested_by}` : ""]
     .filter(Boolean)
     .join("\n\n");
-  Store.addProject({ account: r.account || "main", title: r.title, notes, status: "idea" });
-  Store.updateRequest(id, { status: "approved" });
+  Store.addProject({
+    account: r.account || "main",
+    title: r.title,
+    notes,
+    status: "idea",
+    due_date: r.due_date || null,
+  });
+  Store.deleteRequest(id);
 }
 
 // ----- events -----
@@ -1025,6 +1334,7 @@ document.addEventListener("click", (e) => {
       break;
     case "edit-item":
       if (e.target.closest('[data-action="toggle-done"]')) break;
+      if (e.target.closest('.task-asset')) break;
       openItemModal({ id: el.dataset.id, date: el.dataset.date });
       break;
     case "add-project":
@@ -1063,6 +1373,11 @@ document.addEventListener("click", (e) => {
     case "assign-week":
       openWeekAssignModal();
       break;
+    case "assign-week-current":
+      // From the Today screen: always target the real current week.
+      weekStart = startOfWeek(new Date());
+      openWeekAssignModal();
+      break;
     case "unassign-week":
       Store.setWeekAssignment(account, ymd(weekStart), "");
       closeModal();
@@ -1090,20 +1405,35 @@ document.addEventListener("click", (e) => {
       approveRequest(el.dataset.id);
       break;
     case "decline-request":
-      if (confirm("Decline this request?")) Store.updateRequest(el.dataset.id, { status: "declined" });
-      break;
-    case "delete-request":
-      if (confirm("Remove this request?")) Store.deleteRequest(el.dataset.id);
+      if (confirm("Decline and remove this request?")) Store.deleteRequest(el.dataset.id);
       break;
     case "settings":
       openSettingsModal();
       break;
     case "enable-notifications":
-      if ("Notification" in window) {
-        Notification.requestPermission().then(() => openSettingsModal());
-      } else {
+      if (!("Notification" in window)) {
         alert("This browser does not support notifications.");
+        break;
       }
+      Notification.requestPermission().then(async (perm) => {
+        if (perm === "granted") {
+          const el = document.querySelector('#settings-form [name="myName"]');
+          const name = (el ? el.value : getPrefs().myName || "").trim();
+          if (!name) {
+            alert("Type your name above first so notifications can reach you.");
+            openSettingsModal();
+            return;
+          }
+          setPrefs({ myName: name });
+          Store.addMember(name);
+          const res = await Store.enablePush(name);
+          if (!res.ok && res.reason) {
+            // Local (in-app) notifications still work; push just isn't ready.
+            console.warn("Push subscription:", res.reason);
+          }
+        }
+        openSettingsModal();
+      });
       break;
     case "close-modal":
       closeModal();
