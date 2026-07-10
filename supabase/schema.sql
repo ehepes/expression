@@ -93,6 +93,17 @@ create table if not exists requests (
   created_at timestamptz not null default now()
 );
 
+-- Devices opted in to closed-app push, tied to a person's name (lowercased).
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+create index if not exists push_subscriptions_name_idx on push_subscriptions (name);
+
 -- The app is shared via a private link with a small trusted team, so the
 -- anon key gets full read/write. Don't post the app link publicly.
 alter table items enable row level security;
@@ -103,6 +114,7 @@ alter table week_assignments enable row level security;
 alter table item_exceptions enable row level security;
 alter table links enable row level security;
 alter table requests enable row level security;
+alter table push_subscriptions enable row level security;
 
 create policy "team access" on items for all using (true) with check (true);
 create policy "team access" on completions for all using (true) with check (true);
@@ -112,6 +124,7 @@ create policy "team access" on week_assignments for all using (true) with check 
 create policy "team access" on item_exceptions for all using (true) with check (true);
 create policy "team access" on links for all using (true) with check (true);
 create policy "team access" on requests for all using (true) with check (true);
+create policy "team access" on push_subscriptions for all using (true) with check (true);
 
 -- Live updates: when one person changes something, everyone else sees it.
 alter publication supabase_realtime add table items;

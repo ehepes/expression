@@ -326,6 +326,7 @@ window.Store = (() => {
     if (sb) {
       const { error } = await sb.from("projects").insert(r);
       if (error) return remoteFail(error);
+      if (r.assignee) notifyAssignee(r.assignee, "New project assigned to you", r.title);
       return afterRemoteWrite();
     }
     state.projects.push(r);
@@ -337,9 +338,12 @@ window.Store = (() => {
     const current = state.projects.find((r) => r.id === id);
     if (!current) return;
     const next = projectRow(Object.assign({}, current, fields, { id }));
+    const assigneeChanged =
+      next.assignee && next.assignee.toLowerCase() !== (current.assignee || "").toLowerCase();
     if (sb) {
       const { error } = await sb.from("projects").update(next).eq("id", id);
       if (error) return remoteFail(error);
+      if (assigneeChanged) notifyAssignee(next.assignee, "Project assigned to you", next.title);
       return afterRemoteWrite();
     }
     Object.assign(current, next);
@@ -386,6 +390,7 @@ window.Store = (() => {
             .upsert({ account: acct, week_start: weekStartStr, assignee }, { onConflict: "account,week_start" })
         : await sb.from("week_assignments").delete().eq("account", acct).eq("week_start", weekStartStr);
       if (error) return remoteFail(error);
+      if (assignee) notifyAssignee(assignee, "You're on posting duty this week", "Week of " + weekStartStr);
       return afterRemoteWrite();
     }
     state.week_assignments = state.week_assignments.filter(
@@ -516,6 +521,57 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- web push (closed-app notifications) -----
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  // Subscribe THIS device to push and store it against the person's name, so a
+  // later assignment to that name reaches every device they've enabled.
+  async function enablePush(name) {
+    const cfg = window.EXPRESSION_CONFIG || {};
+    if (!sb) return { ok: false, reason: "Team sync must be on." };
+    if (!cfg.VAPID_PUBLIC_KEY) return { ok: false, reason: "Push isn't configured yet." };
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      return { ok: false, reason: "This browser doesn't support push notifications." };
+    }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(cfg.VAPID_PUBLIC_KEY),
+      });
+      const j = sub.toJSON();
+      const row = {
+        name: (name || "").trim().toLowerCase(),
+        endpoint: j.endpoint,
+        p256dh: j.keys.p256dh,
+        auth: j.keys.auth,
+      };
+      const { error } = await sb.from("push_subscriptions").upsert(row, { onConflict: "endpoint" });
+      if (error) return { ok: false, reason: error.message };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: (e && e.message) || String(e) };
+    }
+  }
+
+  // Ask the Supabase Edge Function to push to everyone registered under `name`.
+  // Fire-and-forget: if push isn't set up yet, this fails quietly.
+  function notifyAssignee(name, title, body) {
+    if (!sb || !name) return;
+    sb.functions
+      .invoke("notify", {
+        body: { name: String(name).trim().toLowerCase(), title, body: body || "", url: "./" },
+      })
+      .catch((e) => console.error("push notify failed:", e));
+  }
+
   return {
     init,
     onChange,
@@ -540,5 +596,6 @@ window.Store = (() => {
     addRequest,
     updateRequest,
     deleteRequest,
+    enablePush,
   };
 })();

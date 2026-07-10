@@ -997,7 +997,7 @@ function openSettingsModal() {
         <div class="field">
           <label>Your name</label>
           <input type="text" name="myName" maxlength="80" value="${esc(prefs.myName || "")}" placeholder="So assignments can find you" />
-          <p class="hint">When a project is assigned to this name, this device gets a notification (needs team sync on and notifications allowed).</p>
+          <p class="hint">When a project or posting week is assigned to this name, every device you've enabled gets a notification — even when the app is closed (needs team sync on and notifications allowed).</p>
         </div>
         <div class="field">
           <button type="button" class="ghost-btn" data-action="enable-notifications" ${granted ? "disabled" : ""}>
@@ -1016,6 +1016,10 @@ function openSettingsModal() {
     const myName = form.myName.value.trim();
     setPrefs({ myName });
     if (myName) Store.addMember(myName); // joins the shared assignment dropdown
+    // Keep this device's push subscription pointed at the current name.
+    if (myName && "Notification" in window && Notification.permission === "granted") {
+      Store.enablePush(myName);
+    }
     closeModal();
   });
 }
@@ -1407,11 +1411,29 @@ document.addEventListener("click", (e) => {
       openSettingsModal();
       break;
     case "enable-notifications":
-      if ("Notification" in window) {
-        Notification.requestPermission().then(() => openSettingsModal());
-      } else {
+      if (!("Notification" in window)) {
         alert("This browser does not support notifications.");
+        break;
       }
+      Notification.requestPermission().then(async (perm) => {
+        if (perm === "granted") {
+          const el = document.querySelector('#settings-form [name="myName"]');
+          const name = (el ? el.value : getPrefs().myName || "").trim();
+          if (!name) {
+            alert("Type your name above first so notifications can reach you.");
+            openSettingsModal();
+            return;
+          }
+          setPrefs({ myName: name });
+          Store.addMember(name);
+          const res = await Store.enablePush(name);
+          if (!res.ok && res.reason) {
+            // Local (in-app) notifications still work; push just isn't ready.
+            console.warn("Push subscription:", res.reason);
+          }
+        }
+        openSettingsModal();
+      });
       break;
     case "close-modal":
       closeModal();

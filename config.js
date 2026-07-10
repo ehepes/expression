@@ -16,4 +16,7 @@
 window.EXPRESSION_CONFIG = {
   SUPABASE_URL: "https://lboueyjikfjtycymigtw.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_jy9ovCKRPW-G1B0QjWELuQ_RlE26hwv",
+  // Public half of the Web Push (VAPID) key. Safe to expose — the private half
+  // lives only as a secret in Supabase. See supabase/PUSH-SETUP.md.
+  VAPID_PUBLIC_KEY: "BG66k15619dm35UKc9r6vPAbft76i8Iv8RL1t6TvnuTv5kQgGmgkKBlBV4MrxcKREsQ8Xw8JFGFB4Ht3OsHn34A",
 };
