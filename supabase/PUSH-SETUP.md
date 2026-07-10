@@ -31,16 +31,29 @@ Claude gave it to you in chat. Keep it secret; don't commit it or share it.
 
 1. Supabase → **Edge Functions** → **Secrets** (also under
    **Project Settings → Edge Functions**).
-2. Add these three:
+2. Add these four:
 
    | Name | Value |
    |---|---|
    | `VAPID_PUBLIC_KEY` | `BG66k15619dm35UKc9r6vPAbft76i8Iv8RL1t6TvnuTv5kQgGmgkKBlBV4MrxcKREsQ8Xw8JFGFB4Ht3OsHn34A` |
    | `VAPID_PRIVATE_KEY` | *(the private key Claude gave you in chat)* |
    | `VAPID_SUBJECT` | `mailto:ehepes@yahoo.com` |
+   | `CRON_SECRET` | *(the cron secret Claude gave you in chat)* |
 
 3. Save. (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are already provided to
    the function automatically — you don't add those.)
+
+## Part 4 — Daily morning reminder (2 min)
+
+This makes whoever is on **posting duty this week** get a "post today"
+notification every morning.
+
+1. Open **`supabase/morning-cron.sql`** and replace `REPLACE_WITH_CRON_SECRET`
+   with the same **CRON_SECRET** value you set in Part 3.
+2. Supabase → **SQL Editor** → **New query** → paste the edited file → **Run**.
+
+It fires at **07:00 UTC** daily. To use a different time, change `'0 7 * * *'`
+in the SQL (it's in UTC) and run it again.
 
 ---
 
@@ -51,8 +64,10 @@ Claude gave it to you in chat. Keep it secret; don't commit it or share it.
 2. Open it from the home screen, go to **Settings ⚙**, type your **name**, and
    tap **Allow notifications on this device**.
 
-That's it. Now, when someone is assigned a project or a posting week, everyone
-registered under that name gets a push — even with the app closed.
+That's it. Now — even with the app closed:
+- assigning a **project** to someone pushes them right away;
+- assigning a **posting week** pushes them right away, **and** they get a
+  "post today" reminder every morning of that week.
 
 ### Notes
 - **iOS** only delivers push to an **installed** PWA on **iOS 16.4+**. In a
