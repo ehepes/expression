@@ -566,7 +566,7 @@ window.Store = (() => {
   function notifyAssignee(name, title, body) {
     if (!sb || !name) return;
     sb.functions
-      .invoke("notify", {
+      .invoke("NOTIFY", {
         body: { name: String(name).trim().toLowerCase(), title, body: body || "", url: "./" },
       })
       .catch((e) => console.error("push notify failed:", e));

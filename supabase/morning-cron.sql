@@ -18,7 +18,7 @@ select cron.schedule(
   '0 7 * * *',
   $$
   select net.http_post(
-    url := 'https://lboueyjikfjtycymigtw.supabase.co/functions/v1/notify',
+    url := 'https://lboueyjikfjtycymigtw.supabase.co/functions/v1/NOTIFY',
     headers := jsonb_build_object(
       'Content-Type', 'application/json',
       -- anon key (public) so the scheduled call clears the function's JWT gateway
