@@ -1,4 +1,4 @@
--- EXPRESSION — daily "you're on posting duty today" morning reminder.
+-- EXPRESSION — daily 9am reminders (posting duty + projects due tomorrow).
 -- Part of push setup (see PUSH-SETUP.md). Run in the SQL Editor AFTER the
 -- notify function is deployed and its secrets (incl. CRON_SECRET) are set.
 --
@@ -11,12 +11,12 @@ create extension if not exists pg_net;
 -- Remove any previous copy of this job so re-running is safe.
 select cron.unschedule(jobid) from cron.job where jobname = 'expression-morning-reminder';
 
--- Fires daily and does two things: reminds whoever is on posting duty to post
--- today, and reminds assignees of any project due tomorrow. Time is in UTC —
--- set the hour to match ~9am in your timezone.
+-- Runs hourly but only fires at 9am Europe/Dublin. Using the local timezone
+-- (not a fixed UTC hour) keeps it at 9am year-round through the summer/winter
+-- clock change. Change '9' for another hour, or 'Europe/Dublin' for another zone.
 select cron.schedule(
   'expression-morning-reminder',
-  '0 9 * * *',
+  '0 * * * *',
   $$
   select net.http_post(
     url := 'https://lboueyjikfjtycymigtw.supabase.co/functions/v1/NOTIFY',
@@ -27,7 +27,8 @@ select cron.schedule(
       'x-cron-secret', 'REPLACE_WITH_CRON_SECRET'
     ),
     body := jsonb_build_object('mode', 'morning')
-  );
+  )
+  where extract(hour from (now() at time zone 'Europe/Dublin')) = 9;
   $$
 );
 
