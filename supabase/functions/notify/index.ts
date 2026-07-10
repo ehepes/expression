@@ -107,6 +107,31 @@ async function sendMorningReminders(): Promise<number> {
   return sent;
 }
 
+// Remind assignees of any project due tomorrow (the day-before deadline nudge).
+async function sendDeadlineReminders(): Promise<number> {
+  const now = new Date();
+  const tomorrow = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1));
+  const dstr = tomorrow.toISOString().slice(0, 10);
+  const { data: projs, error } = await supabase
+    .from("projects")
+    .select("*")
+    .eq("due_date", dstr)
+    .neq("status", "posted");
+  if (error) throw error;
+
+  let sent = 0;
+  for (const p of projs ?? []) {
+    const name = String(p.assignee ?? "").trim().toLowerCase();
+    if (!name) continue;
+    sent += await sendToName(name, {
+      title: "Project due tomorrow",
+      body: `"${p.title}" is due tomorrow.`,
+      url: "./",
+    });
+  }
+  return sent;
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: cors });
   try {
@@ -117,8 +142,9 @@ Deno.serve(async (req) => {
       if (req.headers.get("x-cron-secret") !== Deno.env.get("CRON_SECRET")) {
         return json({ error: "unauthorized" }, 401);
       }
-      const sent = await sendMorningReminders();
-      return json({ ok: true, mode: "morning", sent });
+      const dutySent = await sendMorningReminders();
+      const deadlineSent = await sendDeadlineReminders();
+      return json({ ok: true, mode: "morning", dutySent, deadlineSent });
     }
 
     // Default — notify a single assigned person.

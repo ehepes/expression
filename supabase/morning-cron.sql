@@ -11,11 +11,12 @@ create extension if not exists pg_net;
 -- Remove any previous copy of this job so re-running is safe.
 select cron.unschedule(jobid) from cron.job where jobname = 'expression-morning-reminder';
 
--- Fire every day at 07:00 UTC. Change '0 7 * * *' to another time if you like
--- (it's in UTC — e.g. '0 6 * * *' is 07:00 UK during summer / 06:00 in winter).
+-- Fires daily and does two things: reminds whoever is on posting duty to post
+-- today, and reminds assignees of any project due tomorrow. Time is in UTC —
+-- set the hour to match ~9am in your timezone.
 select cron.schedule(
   'expression-morning-reminder',
-  '0 7 * * *',
+  '0 9 * * *',
   $$
   select net.http_post(
     url := 'https://lboueyjikfjtycymigtw.supabase.co/functions/v1/NOTIFY',
