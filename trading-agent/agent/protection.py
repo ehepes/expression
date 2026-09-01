@@ -19,6 +19,9 @@ from dataclasses import asdict, dataclass
 from .ledger import Ledger
 
 _STATE_KEY = "stops"
+# Used when a caller hands over a stop that makes no sense.
+_DEFAULT_TRAIL = 0.10
+_MAX_TRAIL = 0.90
 
 
 @dataclass
@@ -69,13 +72,19 @@ class StopBook:
     def open_position(self, symbol: str, entry_price: float, stop_price: float) -> StopState:
         """Record the stop for a newly opened position."""
         symbol = symbol.upper()
-        trail = (entry_price - stop_price) / entry_price if entry_price > 0 else 0.0
+        # A stop outside (0, entry) is not a stop. Rather than storing garbage
+        # — which silently leaves the position unguarded — fall back to a
+        # default distance. Callers should clamp before reaching here; this is
+        # the backstop for when they do not.
+        if not 0 < stop_price < entry_price:
+            stop_price = entry_price * (1 - _DEFAULT_TRAIL)
+        trail = (entry_price - stop_price) / entry_price if entry_price > 0 else _DEFAULT_TRAIL
         state = StopState(
             symbol=symbol,
             entry_price=entry_price,
             stop_price=stop_price,
             high_water=entry_price,
-            trail_fraction=max(trail, 0.0),
+            trail_fraction=min(max(trail, 0.0), _MAX_TRAIL),
         )
         book = self._load()
         book[symbol] = asdict(state)
@@ -125,7 +134,11 @@ class StopBook:
         if entry is None:
             if price <= 0:
                 return None
-            base = candidate_stop if candidate_stop and candidate_stop < price else price * 0.9
+            base = (
+                candidate_stop
+                if candidate_stop and 0 < candidate_stop < price
+                else price * (1 - _DEFAULT_TRAIL)
+            )
             state = StopState(
                 symbol=symbol,
                 entry_price=entry_price or price,

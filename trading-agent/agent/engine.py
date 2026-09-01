@@ -101,7 +101,9 @@ class Engine:
         self.cfg = cfg
         self.broker = broker or build_broker(cfg)
         self.ledger = ledger or Ledger(cfg.db_path)
-        self.strategy = strategy_mod.build(cfg.strategy)
+        self.strategy = strategy_mod.build(
+            cfg.strategy, cfg.limits.max_stop_distance_pct / 100.0
+        )
         self.risk = RiskEngine(cfg, self.ledger)
         self.stops = StopBook(self.ledger)
 
@@ -109,7 +111,11 @@ class Engine:
     def mode(self) -> str:
         if self.cfg.broker == "sim":
             return "sim"
-        return "LIVE" if self.cfg.is_live else "paper"
+        if self.cfg.is_live:
+            return "LIVE"
+        # Never label an unarmed real-money account "paper": it is pointed at
+        # real money and is refusing to trade, which is a different thing.
+        return "UNARMED" if self.cfg.is_real_money else "paper"
 
     # -- main entry point --------------------------------------------------
 
@@ -306,15 +312,33 @@ class Engine:
             return
 
         try:
-            positions = self.broker.get_positions()
+            positions = list(self.broker.get_positions())
         except BrokerError:
-            positions = report.positions
+            positions = list(report.positions)
+
+        # A venue may not reflect a just-filled order in its balances yet
+        # (Kraken settles spot asynchronously). Fall back to the engine's own
+        # view for those, so a fresh position is not left unguarded.
+        seen = {position.symbol for position in positions}
+        lagging = [p for p in report.positions if p.symbol not in seen and p.qty > 0]
+        positions.extend(lagging)
 
         for position in positions:
             if position.qty <= 0:
                 continue
             state = self.stops.get(position.symbol)
             if state is None or state.stop_price <= 0:
+                # An open position with no usable stop is the single most
+                # dangerous state this agent can be in. Never pass it over
+                # quietly.
+                report.actions.append(
+                    Action(
+                        position.symbol,
+                        "hold",
+                        "protective stop",
+                        blocked_by="NO USABLE STOP ON FILE — position is unprotected",
+                    )
+                )
                 continue
             try:
                 order = placer(position.symbol, position.qty, state.stop_price)

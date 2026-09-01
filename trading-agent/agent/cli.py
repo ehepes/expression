@@ -49,6 +49,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         return 1
     print(f"{PASS}  config loaded (broker={cfg.broker}, strategy={cfg.strategy})")
 
+    if cfg.broker == "kraken":
+        print(f"{WARN}  Kraken has no paper mode — this is a REAL MONEY account")
+        if not cfg.is_armed:
+            print(
+                f"{FAIL}  LIVE_CONFIRM is not set to {LIVE_CONFIRM_PHRASE!r}; "
+                "the agent will refuse to place orders"
+            )
     if cfg.broker == "alpaca":
         target = "REAL MONEY" if cfg.is_live else "paper money"
         print(f"{PASS}  endpoint {cfg.trading_base_url}  -> {target}")
@@ -100,7 +107,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         print(f"{FAIL}  market clock unreachable: {exc}")
         failures += 1
 
-    strategy = build_strategy(cfg.strategy)
+    strategy = build_strategy(cfg.strategy, cfg.limits.max_stop_distance_pct / 100.0)
     print(f"  -- market data ({cfg.alpaca_data_feed} feed, need {strategy.warmup} daily bars) --")
     for symbol in cfg.universe:
         try:
@@ -114,16 +121,46 @@ def cmd_preflight(args: argparse.Namespace) -> int:
             failures += 1
             continue
         note = ""
+        blocked = False
         checker = getattr(broker, "is_fractionable", None)
         if callable(checker):
             try:
-                note = "" if checker(symbol) else "  (NOT fractionable — unusable at this size)"
-            except BrokerError:
-                note = "  (fractionable: unknown)"
-        line = PASS if "NOT" not in note else FAIL
-        if "NOT" in note:
+                if not checker(symbol):
+                    note = "  (NOT fractionable — unusable at this size)"
+                    blocked = True
+            except BrokerError as exc:
+                note = f"  ({exc})"
+                blocked = True
+
+        # Venues with per-instrument minimums (Kraken) can make a symbol
+        # untradable at this account size. That is the binding constraint at
+        # €50, so it is checked here rather than discovered from a rejection.
+        limits_for = getattr(broker, "pair_limits", None)
+        if callable(limits_for) and not blocked:
+            try:
+                ordermin, costmin = limits_for(symbol)
+                price = bars[-1].close
+                floor = max(ordermin * price, costmin)
+                if floor > 0:
+                    note = f"  min order ~{floor:.2f} {account.currency}"
+                    if floor > cfg.limits.max_order_notional:
+                        note += (
+                            f"  -> EXCEEDS MAX_ORDER_NOTIONAL "
+                            f"({cfg.limits.max_order_notional:.2f}); this pair cannot be traded"
+                        )
+                        blocked = True
+                    elif floor > cfg.limits.max_deployed:
+                        note += "  -> exceeds MAX_DEPLOYED"
+                        blocked = True
+            except BrokerError as exc:
+                note = f"  (minimums unknown: {exc})"
+
+        if blocked:
             failures += 1
-        print(f"{line}  {symbol}: {len(bars)} bars, last close {bars[-1].close:.2f}{note}")
+        print(
+            f"{FAIL if blocked else PASS}  {symbol}: {len(bars)} bars, "
+            f"last {bars[-1].close:.2f}{note}"
+        )
 
     halt = Path(cfg.halt_file)
     if halt.exists():
@@ -181,7 +218,7 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         return 1
 
     broker = build_broker(cfg)
-    strategy = build_strategy(cfg.strategy)
+    strategy = build_strategy(cfg.strategy, cfg.limits.max_stop_distance_pct / 100.0)
     needed = strategy.warmup + args.bars
 
     bars_by_symbol = {}
@@ -222,17 +259,17 @@ def cmd_go_live(args: argparse.Namespace) -> int:
 
     blockers: list[str] = []
 
-    if cfg.broker != "alpaca":
-        blockers.append(f"BROKER is {cfg.broker!r}, not 'alpaca' — this is not a real account")
-        print(f"{FAIL}  BROKER={cfg.broker}")
+    if not cfg.is_real_money:
+        blockers.append(
+            f"BROKER={cfg.broker}"
+            + (" with ALPACA_ENV=paper" if cfg.broker == "alpaca" else "")
+            + " does not point at a real-money account"
+        )
+        print(f"{FAIL}  BROKER={cfg.broker} (not real money)")
+    elif cfg.broker == "kraken":
+        print(f"{PASS}  BROKER=kraken (real money — Kraken has no paper mode)")
     else:
-        print(f"{PASS}  BROKER=alpaca")
-
-    if cfg.alpaca_env != "live":
-        blockers.append("ALPACA_ENV is not 'live' — set ALPACA_ENV=live in .env")
-        print(f"{FAIL}  ALPACA_ENV={cfg.alpaca_env} (still paper)")
-    else:
-        print(f"{PASS}  ALPACA_ENV=live -> {cfg.trading_base_url}")
+        print(f"{PASS}  BROKER=alpaca ALPACA_ENV=live -> {cfg.trading_base_url}")
 
     if cfg.live_confirm != LIVE_CONFIRM_PHRASE:
         blockers.append(f"LIVE_CONFIRM must be exactly: {LIVE_CONFIRM_PHRASE}")
@@ -241,7 +278,7 @@ def cmd_go_live(args: argparse.Namespace) -> int:
         print(f"{PASS}  LIVE_CONFIRM phrase accepted")
 
     account = None
-    if cfg.broker == "alpaca" and cfg.alpaca_key_id and cfg.alpaca_secret_key:
+    if cfg.is_real_money:
         try:
             account = build_broker(cfg).get_account()
             print(

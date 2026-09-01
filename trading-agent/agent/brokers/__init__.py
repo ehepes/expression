@@ -12,6 +12,10 @@ def build(cfg: Config) -> Broker:
         from .alpaca import AlpacaBroker
 
         return AlpacaBroker(cfg)
+    if cfg.broker == "kraken":
+        from .kraken import KrakenBroker
+
+        return KrakenBroker(cfg)
     if cfg.broker == "sim":
         from .sim import SimBroker
 

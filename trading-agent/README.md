@@ -4,76 +4,52 @@ A small, auditable trading agent that connects to a brokerage account, scores a
 universe of instruments once per cycle, and places orders inside hard limits it
 is not allowed to exceed.
 
-It defaults to **paper money** and will not touch real money until you
-explicitly arm it. Read [the three costs](#the-three-costs-that-decide-everything-at-50)
-first — at a €50 account size that section decides more than the strategy does.
+Default venue is **Kraken** (EUR-native, MiCA/CASP licensed by the Central Bank
+of Ireland). Alpaca and an offline simulator are also supported.
+
+> **Kraken has no paper mode.** Selecting it means real money from the first
+> connection. The agent refuses to place any order until you arm it
+> deliberately — see [Going live](#going-live).
 
 ---
 
 ## The three costs that decide everything at €50
 
-Trading costs are not one number. At this account size all three matter, and
-the third one is the one nobody mentions until it is too late:
+Trading cost is not one number. At this size all three matter, and the third is
+the one nobody mentions until it is too late:
 
 | | Cost to trade | Cost in (FX) | **Cost to get your money out** |
 |---|---|---|---|
-| **Alpaca** | €0 commission | EUR→USD, ~1.5% | **$50 international wire** |
-| **IBKR Ireland** | ~€1.25 min/order | none if you trade EU stocks | 1 free withdrawal per calendar month |
 | **Kraken** | 0.25–0.40% | none, EUR-native | ~€1 SEPA |
+| **Alpaca** | €0 commission | EUR→USD, ~1.5% | **$50 international wire** |
+| **IBKR Ireland** | ~€1.25 min/order | none on EU stocks | 1 free withdrawal/month |
 
 Alpaca is the cheapest place to *trade* and the most expensive place to
-*leave*. Withdrawing €50 by international wire costs $50 — the whole account.
-That is not a reason to avoid it, but it changes what funding it means: money
-you put into Alpaca is money you should plan to leave there and add to, not
-money you expect to move back to your Irish bank next month.
-
-If you want the €50 to be genuinely round-trippable, the euro-native options
-(Kraken, or IBKR with its one free monthly withdrawal) are the ones where all
-three costs stay small.
+*leave*: withdrawing €50 by international wire costs $50, the whole account.
+IBKR's €1.25 minimum is ~8% round-trip on a €15 position, which no strategy
+overcomes. Kraken is the only one of the three where all three costs stay small
+on a €50 balance — at the price of trading crypto rather than equities.
 
 ### What the upside actually looks like
 
 A genuinely excellent 20% year on €50 is **€10**. That is the realistic
-ceiling, and it is why the table above dominates the decision — a €1.25
-commission on a €15 position is 8% round-trip, which no strategy overcomes.
-The agent defaults to a commission-free venue for exactly this reason.
+ceiling, and it is why the table above decides more than the strategy does.
 
 Nothing here has a private edge. The strategies are public techniques,
-implemented carefully and with the costs counted honestly. Over any given
-month the most likely outcome is a small loss; the second most likely is a
-small gain.
+implemented carefully with the costs counted honestly. Over any given month the
+most likely outcome is a small loss; the second most likely is a small gain.
 
-## Broker options in Ireland
+### What trading crypto instead of ETFs actually changes
 
-You asked for options other than Trading 212. To run an agent like this, a
-broker needs a **documented trading API** — which rules out most retail apps
-Irish residents use. DEGIRO, Revolut, Lightyear and eToro have no public
-order-placing API for retail customers, so none of them can be automated at
-all, regardless of how good they are as manual brokers.
-
-That leaves a short list.
-
-| Broker | Regulated entity | API | Cost per trade | Fractional | Verdict at €50 |
-|---|---|---|---|---|---|
-| **Alpaca** | Alpaca Securities / EU entity, [EEA-passported to Ireland](https://alpaca.markets/blog/alpaca-completes-eea-passporting-to-29-countries-expanding-access-to-regulated-investment-services-across-europe/) since July 2026 | Excellent REST API, first-class; free paper API identical to live | Commission-free US equities/ETFs | Yes | **Best fit.** The only option where €50 is not eaten by fees |
-| **Interactive Brokers Ireland (IBIE)** | Central Bank of Ireland | [Web API / TWS API](https://www.interactivebrokers.com/campus/ibkr-api-page/webapi-doc/), mature but heavier | ~€1.25 min per EU order, ~$0.35 min per US order | Yes | Excellent broker, wrong size. Commission minimums dominate a €50 account |
-| **Kraken** | Payward Europe Solutions Ltd, MiCA/CASP licensed by the Central Bank of Ireland | Good REST/WebSocket API | 0.25% maker / 0.40% taker | Yes, to tiny amounts | Viable mechanically, but crypto volatility on €50 is a different risk than you asked for |
-| **Capital.com / IG** | CySEC / CBI | Yes | Spread-based | N/A | **Avoid.** These are CFD venues; leverage on €50 is how €50 becomes €0 |
-
-**Recommendation: start with Alpaca paper trading.** It costs nothing, needs no
-funding, and the paper API is byte-for-byte the same API as live — so the code
-you validate is the code that later trades. If after a few weeks of paper
-results you still want to fund it, Alpaca is also the only one on this list
-where €50 is not immediately consumed by per-trade costs.
-
-Two caveats to verify yourself, because they depend on your circumstances:
-
-- Confirm at signup that Alpaca opens accounts for Irish residents in your
-  situation — passporting is in place, but eligibility is theirs to confirm.
-- US shares held via a US broker involve a **W-8BEN** form, US dividend
-  withholding tax, and Irish tax on gains. Irish CGT rules and the annual
-  exemption apply to your gains regardless of size. I am not a tax adviser;
-  if the amounts ever grow beyond trivial, get one.
+- **Volatility is several times higher.** The agent responds by sizing
+  positions *down* — risking a fixed 1.5% of equity to the stop means a wide
+  stop produces a small position. On a €50 balance expect positions around
+  €3–5, not €15. That is the risk model working, not a bug.
+- **Markets never close.** There is no overnight gap, but also no close to
+  reset at. Run the agent on a schedule; it is not more profitable for
+  watching continuously.
+- **No investor-protection scheme covers crypto.** MiCA regulates conduct and
+  custody standards, not your losses. There is no ICS or SIPC equivalent here.
 
 ---
 
@@ -83,17 +59,26 @@ Two caveats to verify yourself, because they depend on your circumstances:
 They are bearer credentials — anything holding them can move your money, and a
 transcript is not a safe place to keep one.
 
-So the credential step runs on your machine, in a gitignored `.env`, and the
-agent proves the connection itself:
+The credential step runs on your machine, in a gitignored `.env`, and the agent
+proves the connection itself:
 
 ```bash
-python -m agent preflight   # verifies credentials, account, data, fractionability
+python -m agent preflight   # verifies credentials, balance, data, minimum order sizes
 python -m agent go-live     # real-money arming checklist
 ```
 
-`preflight` tells you exactly what is wrong if anything is. `go-live` shows
-your real balance and the limits that will bind, then requires you to type a
-confirmation phrase before anything is armed.
+When you create the Kraken API key, grant only:
+
+- Query Funds
+- Query Open Orders & Trades
+- Query Closed Orders & Trades
+- Create & Modify Orders
+- Cancel Orders
+
+**Do not enable Withdraw Funds.** The agent never needs it, and a key that
+cannot withdraw cannot be used to drain the account if it leaks.
+
+---
 
 ## Setup
 
@@ -101,32 +86,28 @@ confirmation phrase before anything is armed.
 cd trading-agent
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-
 cp .env.example .env
 ```
 
-Then, in `.env`, set `ALPACA_KEY_ID` and `ALPACA_SECRET_KEY` from
-**app.alpaca.markets → Home → API Keys**. Generate **paper** keys — they are a
-different pair from live keys.
-
-Verify the connection:
+Fill in `KRAKEN_KEY` and `KRAKEN_SECRET`, then:
 
 ```bash
 python -m agent preflight
 ```
 
-This checks credentials, account status, tradability, the market clock, and
-that every symbol in your universe has enough history and supports fractional
-shares. It prints `READY` or a list of exactly what is blocking.
+Preflight checks credentials, balance, market data, and — the constraint that
+actually binds at €50 — each pair's **minimum order size**. Kraken enforces a
+per-pair `ordermin`; if a pair's minimum exceeds your `MAX_ORDER_NOTIONAL`,
+preflight fails that pair rather than letting you discover it from a rejected
+order.
 
-Then watch it think without letting it act:
+Watch it think without letting it act:
 
 ```bash
-python -m agent run --dry-run --ignore-market-hours
+python -m agent run --dry-run
 ```
 
-Every decision, including refusals, is written to `agent.db`. Run it daily for
-a few weeks and read that journal before considering real money.
+Every decision, including refusals, is journalled to `agent.db`.
 
 ---
 
@@ -135,72 +116,71 @@ a few weeks and read that journal before considering real money.
 ```bash
 python -m agent run                  # one decision cycle
 python -m agent run --loop 900       # every 15 minutes
-python -m agent status               # account, positions, recent orders
+python -m agent status               # balance, positions, stops, recent orders
 python -m agent backtest --bars 500  # replay the strategy over history
 python -m agent go-live              # real-money arming checklist
 python -m agent halt                 # stop trading immediately
 python -m agent resume               # clear the halt
 ```
 
-A daily cycle is enough for both shipped strategies. They are designed to trade
-rarely; running the loop every minute costs API calls and changes nothing.
-
-Under cron, one pass shortly after the US open is a reasonable cadence:
+A daily cycle is enough for both strategies; they are designed to trade rarely.
+Crypto trades continuously, so pick a fixed time rather than polling hard:
 
 ```cron
-35 14 * * 1-5 cd /path/to/trading-agent && .venv/bin/python -m agent run >> agent.log 2>&1
+0 9 * * * cd /path/to/trading-agent && .venv/bin/python -m agent run >> agent.log 2>&1
 ```
 
 ---
 
 ## Going live
 
-Funding, in order:
+Real money takes **four** deliberate steps, so it cannot happen by accident:
 
-1. Open a **live** account at app.alpaca.markets and complete the **W-8BEN**
-   (it cuts US dividend withholding from 30% to 15% under the Ireland–US
-   treaty). Irish CGT applies to your gains regardless of size.
-2. Fund it. From Ireland that means EUR→USD conversion; send **euros** from a
-   euro account, not another currency, or the transfer fails. Alpaca holds USD
-   only.
-3. Re-read the withdrawal line in the table at the top before you send money.
-
-Then arm it. Real money takes **four** deliberate steps, so it cannot happen
-by accident:
-
-1. `ALPACA_ENV=live`
-2. A live key pair (different from your paper keys)
+1. `BROKER=kraken` (or `ALPACA_ENV=live`)
+2. A real key pair in `.env`
 3. `LIVE_CONFIRM=I ACCEPT REAL MONEY LOSS` — exact, case-sensitive
-4. `python -m agent go-live` — which shows your real balance and makes you type
-   the phrase back
+4. `python -m agent go-live` — shows your real balance and the limits that will
+   bind, then makes you type the phrase back
 
 Miss any one and the agent halts with `live_unarmed` and places no orders.
-There is a test asserting exactly that.
+There is a test asserting exactly that, for both venues.
 
-Set `MAX_DEPLOYED` to the amount you are actually willing to lose. It caps
-deployment even if the account later holds more.
+An unarmed real-money config reports `mode=UNARMED`, never `paper` — it is
+pointed at real money and refusing, which is a different thing from being safe.
+
+Set `MAX_DEPLOYED` to the amount you are actually willing to lose.
+
+---
 
 ## Stop losses
 
-Every position gets a stop, recorded when it opens and persisted in the
-ledger. It is a **ratchet**: it follows the high-water price up and never
-moves down, so a position that runs up locks in the gain.
+Every position gets a stop, recorded when it opens and persisted in the ledger.
+It is a **ratchet**: it follows the high-water price up and never moves down, so
+a position that runs up locks in the gain.
 
-The stop is enforced in two independent places:
+Enforced in two independent places:
 
-- **At cycle time**, against the *live* price rather than the last daily
-  close. A breach is a forced exit that overrides the strategy — and overrides
-  the day-trade guard, because a pattern-day-trader flag is a bad outcome and
-  an unstopped loss is a worse one.
-- **At the broker**, as a resting sell stop, so the position is guarded even
-  if this process never runs again.
+- **At cycle time**, against the *live* price, not the last daily close. A
+  breach is a forced exit that overrides the strategy — and overrides the
+  day-trade guard, because a pattern-day-trader flag is recoverable and an
+  unstopped loss is not.
+- **At the broker**, as a resting `stop-loss` order, so the position stays
+  guarded even if this process never runs again. It is cancelled and re-armed
+  each cycle as the trail moves up.
 
-**The limit you need to know:** Alpaca supports fractional stop orders only
-with `time_in_force=day`, so the resting stop expires at the close and is
-re-armed on the next cycle. It protects you *during* sessions, not across
-overnight gaps. If the market gaps down through your stop overnight, you exit
-below it. No retail setup avoids that; be aware of it rather than surprised by
-it.
+Two limits worth knowing:
+
+- **Stops are clamped by `MAX_STOP_DISTANCE_PCT` (default 25%).** On a volatile
+  instrument an ATR-derived stop can come out wider than the price itself,
+  which is not a stop at all. The clamp guarantees `0 < stop < price` always.
+  This matters far more on crypto than it ever did on ETFs.
+- **A stop is not a guarantee.** It becomes a market order when triggered. In a
+  fast move you can fill below it. No retail setup avoids this.
+
+If a position ever ends a cycle without a usable stop, the agent says so
+explicitly rather than continuing quietly.
+
+---
 
 ## Safety limits
 
@@ -213,17 +193,17 @@ against a freshly fetched account immediately before every order.
 | `MAX_ORDER_NOTIONAL` | 15 | Largest single order |
 | `MIN_ORDER_NOTIONAL` | 2 | Below this, skip rather than place a pointless order |
 | `RISK_PER_TRADE_PCT` | 1.5 | Equity risked per trade, measured to the stop |
+| `MAX_STOP_DISTANCE_PCT` | 25 | Ceiling on how far below entry a stop may sit |
 | `DAILY_LOSS_LIMIT_PCT` | 4 | Stop trading for the day after this loss |
-| `MAX_DRAWDOWN_PCT` | 25 | **Permanent** stop once equity falls this far below its peak |
+| `MAX_DRAWDOWN_PCT` | 25 | **Permanent** stop once equity falls this far below peak |
 | `MAX_ORDERS_PER_DAY` | 6 | Hard cap on daily order count |
-| `MAX_DAY_TRADES` | 2 | Guards against a US pattern-day-trader flag |
+| `MAX_DAY_TRADES` | 2 | Guards against a US pattern-day-trader flag (Alpaca only) |
 | `MAX_POSITIONS` | 2 | Simultaneous open positions |
 | `HALT_FILE` | `./HALT` | If this file exists, no orders are placed, full stop |
 
-Stops are covered in their own section above. Beyond those: the agent is **long-only**, never uses leverage or margin, never
-shorts, trades only whole-market ETFs by default, and places only day orders —
-an order that did not fill today was based on stale information, so it expires
-rather than resting.
+Beyond those: the agent is **long-only**, never uses leverage or margin, never
+shorts, and places only day orders — an order that did not fill was based on
+stale information, so it expires rather than resting.
 
 The kill switch is a file. `touch HALT` stops it from anywhere — another
 terminal, a phone over SSH, a cron job — without needing to find a process.
@@ -233,9 +213,8 @@ terminal, a phone over SSH, a cron job — without needing to find a process.
 ## Strategies
 
 **`trend`** (default) — dual moving-average crossover (20/100) with a 200-day
-regime filter and an ATR-based stop. Buys only what is above its long-term
-average and trending up; exits on the reverse cross or a regime break. Trades
-rarely, which is the point at this account size.
+regime filter and an ATR stop. Buys only what is above its long-term average
+and trending up; exits on the reverse cross or a regime break.
 
 **`meanrev`** — buys 2-day RSI dips below 10, but only in instruments already
 above their 200-day average; exits on the bounce. Higher turnover, so it is the
@@ -253,21 +232,22 @@ agent/
   config.py       env-driven config; every money limit in one auditable place
   brokers/
     base.py       broker-neutral types + the Protocol every adapter implements
-    alpaca.py     Alpaca REST adapter (paper and live share this path)
+    kraken.py     Kraken spot adapter (EUR-native; real money only)
+    alpaca.py     Alpaca adapter (paper and live share this path)
     sim.py        fully offline simulator — no keys, no network, no money
   indicators.py   SMA / ATR / RSI, returning None until fully warmed up
   strategy.py     signal generation; never sizes, never touches a broker
-  risk.py         the layer allowed to say no
   protection.py   persistent ratcheting stops; the loss limiter
+  risk.py         the layer allowed to say no
   ledger.py       SQLite journal of every decision, refusal and fill
   engine.py       the decision loop; exits processed before entries, always
   backtest.py     next-open fills, costs on both sides
   cli.py          preflight / go-live / run / status / backtest / halt / resume
-tests/            80 tests, no network required
+tests/            111 tests, no network required
 ```
 
-Adding another broker means writing one file against `brokers/base.Broker`. The
-engine, risk layer and strategies do not change.
+Adding another venue means writing one file against `brokers/base.Broker`. The
+engine, risk layer and stops did not change when Kraken was added.
 
 ---
 
@@ -277,14 +257,17 @@ engine, risk layer and strategies do not change.
 python -m unittest discover -s tests -t .
 ```
 
-80 tests, fully offline. They cover indicator warm-up, the risk vetoes
-individually, that live mode without the confirmation phrase places no orders,
-that a cycle never re-buys an open position, that the deployment cap and
-position cap hold across repeated cycles, that the halt file stops everything,
-and that stops ratchet up, never loosen, fire on a breach, and bank a gain
-when they trail above the entry price.
+111 tests, fully offline — the Kraken adapter is tested against a fake HTTP
+layer that asserts on request signing, nonce ordering, pair-alias resolution,
+volume rounding and minimum-order enforcement.
 
-Try the whole pipeline right now without any credentials:
+They also cover: that live mode without the confirmation phrase places no
+orders on either venue; that a cycle never re-buys an open position; that the
+deployment and position caps hold across repeated cycles; that stops ratchet
+up, never loosen, fire on a breach, and bank a gain when they trail above
+entry; and that a stop is never stored negative, zero, or above the price.
+
+Run the whole pipeline right now with no credentials:
 
 ```bash
 BROKER=sim UNIVERSE=SPY,QQQ,IWM python -m agent preflight
@@ -293,16 +276,24 @@ BROKER=sim UNIVERSE=SPY,QQQ,IWM python -m agent run --dry-run
 
 ---
 
+## Tax
+
+Irish CGT applies to gains on crypto disposals, and every sale is a disposal —
+an automated agent can generate a lot of them. The annual exemption is small;
+the record-keeping burden is real. `agent.db` journals every fill with
+timestamp, price and quantity, which is what you will need. I am not a tax
+adviser; if this grows beyond trivial amounts, get one.
+
+---
+
 ## Sources
 
-- [Alpaca — EEA passporting to 29 countries incl. Ireland](https://alpaca.markets/blog/alpaca-completes-eea-passporting-to-29-countries-expanding-access-to-regulated-investment-services-across-europe/)
-- [Alpaca — opening a live account as a non-US resident](https://alpaca.markets/learn/live-trading-account-non-us)
-- [Interactive Brokers Ireland — commissions](https://www.interactivebrokers.ie/en/pricing/commissions-stocks.php)
-- [IBKR Web API documentation](https://www.interactivebrokers.com/campus/ibkr-api-page/webapi-doc/)
 - [Kraken — MiCA licence via the Central Bank of Ireland](https://casptracker.eu/exchange/kraken/)
+- [Kraken — EU/MiCA entity and fees](https://www.kraken.com/europe-switch)
+- [Alpaca — EEA passporting to 29 countries incl. Ireland](https://alpaca.markets/blog/alpaca-completes-eea-passporting-to-29-countries-expanding-access-to-regulated-investment-services-across-europe/)
 - [Alpaca — transfer fees outside the US](https://alpaca.markets/support/fees-transfers-outside-us)
-- [Alpaca — funding as a non-US resident](https://alpaca.markets/support/international-use-fund-account)
 - [Alpaca — fractional trading order types](https://docs.alpaca.markets/us/docs/fractional-trading)
+- [Interactive Brokers Ireland — commissions](https://www.interactivebrokers.ie/en/pricing/commissions-stocks.php)
 
 ---
 

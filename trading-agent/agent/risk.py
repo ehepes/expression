@@ -61,10 +61,15 @@ class RiskEngine:
             )
 
         if self._cfg.live_requested_but_unarmed:
+            why = (
+                "BROKER=kraken is always a real-money account (Kraken has no paper mode)"
+                if self._cfg.broker == "kraken"
+                else "ALPACA_ENV=live selects a real-money account"
+            )
             vetoes.append(
                 Veto(
                     "live_unarmed",
-                    "ALPACA_ENV=live but LIVE_CONFIRM is not set to the exact phrase "
+                    f"{why}, but LIVE_CONFIRM is not set to the exact phrase "
                     f"{LIVE_CONFIRM_PHRASE!r}. Refusing to trade real money.",
                     True,
                 )

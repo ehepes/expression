@@ -2,18 +2,20 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import tempfile
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from agent import indicators, strategy
 from agent.backtest import run_backtest
 from agent.brokers.base import Account, Bar, BrokerError, Position
+from agent.brokers.kraken import KrakenBroker
 from agent.brokers.sim import SimBroker, synthetic_bars
 from agent.config import LIVE_CONFIRM_PHRASE, Config, ConfigError, Limits
-from agent.engine import Engine
+from agent.engine import CycleReport, Engine
 from agent.ledger import Ledger
 from agent.protection import StopBook, StopState
 from agent.risk import RiskEngine
@@ -96,6 +98,35 @@ class TestStrategy(unittest.TestCase):
 
         downtrend = make_bars([300 - i for i in range(260)])
         self.assertEqual(meanrev.evaluate(downtrend, held=False).action, strategy.HOLD)
+
+    def test_stop_is_clamped_when_volatility_exceeds_price(self):
+        """The crypto case: k*ATR can exceed the price itself."""
+        trend = strategy.TrendStrategy()
+        # Violently volatile but still trending up.
+        closes = [100 + i * 3 + (60 if i % 2 else -60) for i in range(260)]
+        signal = trend.evaluate(make_bars(closes), held=False)
+        self.assertGreater(signal.stop_price, 0, "a stop must never be negative")
+        self.assertLess(signal.stop_price, signal.price, "a stop must sit below price")
+
+    def test_clamp_floors_the_stop_at_max_stop_fraction(self):
+        trend = strategy.TrendStrategy()
+        trend.max_stop_fraction = 0.20
+        self.assertAlmostEqual(trend._clamp_stop(100.0, -50.0), 80.0, places=6)
+        self.assertAlmostEqual(trend._clamp_stop(100.0, 0.0), 80.0, places=6)
+        self.assertAlmostEqual(trend._clamp_stop(100.0, 150.0), 80.0, places=6)
+        # A tighter-than-ceiling stop is kept as-is.
+        self.assertAlmostEqual(trend._clamp_stop(100.0, 95.0), 95.0, places=6)
+        # A looser one is pulled up to the ceiling.
+        self.assertAlmostEqual(trend._clamp_stop(100.0, 50.0), 80.0, places=6)
+
+    def test_build_applies_the_configured_stop_ceiling(self):
+        built = strategy.build("trend", 0.05)
+        self.assertAlmostEqual(built.max_stop_fraction, 0.05)
+
+    def test_build_rejects_an_impossible_stop_ceiling(self):
+        for bad in (0.0, 1.0, -0.1, 1.5):
+            with self.assertRaises(ValueError):
+                strategy.build("trend", bad)
 
     def test_build_rejects_unknown_strategy(self):
         with self.assertRaises(ValueError):
@@ -556,6 +587,13 @@ class TestStopBook(unittest.TestCase):
         state = self.stops.update("SPY", price=120.0, candidate_stop=95.0)
         self.assertAlmostEqual(state.stop_price, 108.0, places=6)
 
+    def test_nonsensical_stop_is_rejected_not_stored(self):
+        for bad in (-311.0, 0.0, 150.0):
+            state = self.stops.open_position("SPY", entry_price=100.0, stop_price=bad)
+            self.assertGreater(state.stop_price, 0)
+            self.assertLess(state.stop_price, 100.0)
+            self.assertLessEqual(state.trail_fraction, 0.90)
+
     def test_state_survives_a_new_book_over_the_same_ledger(self):
         self.stops.open_position("SPY", 100.0, 90.0)
         self.assertEqual(StopBook(self.ledger).get("SPY").stop_price, 90.0)
@@ -653,6 +691,45 @@ class TestStopEnforcement(unittest.TestCase):
         maxed = Account("A1", "USD", 50, 50, 50, day_trade_count=99)
         self.assertIsNotNone(self.engine.risk.check_exit("SPY", maxed))
 
+    def test_every_open_position_ends_the_cycle_with_a_usable_stop(self):
+        for _ in range(3):
+            self.engine.cycle()
+        for position in self.broker.get_positions():
+            state = self.engine.stops.get(position.symbol)
+            self.assertIsNotNone(state, f"{position.symbol} has no stop")
+            self.assertGreater(state.stop_price, 0)
+            self.assertLess(state.stop_price, self.broker.latest_price(position.symbol) * 1.5)
+
+    def test_a_corrupted_stop_is_repaired_on_the_next_cycle(self):
+        symbol = self._open_one()
+        # Simulate the old bug: a stored stop of zero, i.e. no protection.
+        self.engine.stops._ledger.set_state(
+            "stops", {symbol: {"symbol": symbol, "entry_price": 10.0,
+                               "stop_price": 0.0, "high_water": 10.0,
+                               "trail_fraction": 0.1}})
+        self.engine.cycle()
+        repaired = self.engine.stops.get(symbol)
+        self.assertIsNotNone(repaired)
+        self.assertGreater(repaired.stop_price, 0, "the cycle must repair a zeroed stop")
+        self.assertLess(repaired.stop_price, self.broker.latest_price(symbol))
+
+    def test_an_unprotected_position_is_reported_loudly(self):
+        """When a stop cannot be established at all, say so — never skip it."""
+        symbol = self._open_one()
+        self.engine.stops.close(symbol)  # no stop on file at all
+        report = CycleReport(
+            started_at=datetime.now(timezone.utc), mode="sim",
+            broker_name="sim", strategy_name="trend",
+        )
+        run_id = self.ledger.start_run(
+            mode="t", broker="sim", strategy="trend", equity=50, cash=50
+        )
+        self.engine._arm_protective_stops(report, run_id)
+        self.assertTrue(
+            any("unprotected" in (a.blocked_by or "").lower() for a in report.actions),
+            "a position with no usable stop must be surfaced, not skipped silently",
+        )
+
     def test_price_above_stop_does_not_exit(self):
         symbol = self._open_one()
         state = self.engine.stops.get(symbol)
@@ -717,6 +794,271 @@ class TestStopEnforcement(unittest.TestCase):
         self.assertTrue(
             any(a.executed and a.intent == "exit" and a.symbol == symbol for a in report.actions)
         )
+
+
+# ---------------------------------------------------------------------------
+# Kraken adapter, exercised against a fake HTTP layer (no network).
+# ---------------------------------------------------------------------------
+
+ASSET_PAIRS = {
+    "XXBTZEUR": {
+        "altname": "XBTEUR", "wsname": "XBT/EUR",
+        "base": "XXBT", "quote": "ZEUR",
+        "lot_decimals": 8, "pair_decimals": 1,
+        "ordermin": "0.00005", "costmin": "0.5",
+    },
+    "XETHZEUR": {
+        "altname": "ETHEUR", "wsname": "ETH/EUR",
+        "base": "XETH", "quote": "ZEUR",
+        "lot_decimals": 8, "pair_decimals": 2,
+        "ordermin": "0.002", "costmin": "0.5",
+    },
+}
+
+
+class FakeResponse:
+    def __init__(self, payload, status_code=200):
+        self._payload = payload
+        self.status_code = status_code
+        self.ok = status_code < 400
+        self.text = str(payload)
+
+    def json(self):
+        return self._payload
+
+
+class FakeKrakenSession:
+    """Canned Kraken responses; records every request for assertions."""
+
+    def __init__(self, **overrides):
+        self.headers = {}
+        self.calls = []
+        self.posts = []
+        self.overrides = overrides
+        self.btc_balance = "0.1"
+
+    def _payload(self, path):
+        if path in self.overrides:
+            return self.overrides[path]
+        if path.endswith("/AssetPairs"):
+            return {"error": [], "result": ASSET_PAIRS}
+        if path.endswith("/OHLC"):
+            rows = [
+                [1700000000 + i * 86400, "100", "110", "90", str(100 + i), "0", "5", 10]
+                for i in range(30)
+            ]
+            return {"error": [], "result": {"XXBTZEUR": rows, "last": 1}}
+        if path.endswith("/Ticker"):
+            return {"error": [], "result": {"XXBTZEUR": {"c": ["100.0", "0.1"]}}}
+        if path.endswith("/SystemStatus"):
+            return {"error": [], "result": {"status": "online"}}
+        if path.endswith("/Balance"):
+            return {"error": [], "result": {"ZEUR": "50.0", "XXBT": self.btc_balance}}
+        if path.endswith("/TradeBalance"):
+            return {"error": [], "result": {"eb": "55.0"}}
+        if path.endswith("/AddOrder"):
+            return {"error": [], "result": {"txid": ["OABC-123"]}}
+        if path.endswith("/OpenOrders"):
+            return {"error": [], "result": {"open": {"OXYZ-1": {
+                "descr": {"pair": "XBTEUR", "type": "sell",
+                          "ordertype": "stop-loss", "price": "90.0"},
+                "vol": "0.001", "status": "open"}}}}
+        if path.endswith("/CancelOrder"):
+            return {"error": [], "result": {"count": 1}}
+        if path.endswith("/TradesHistory"):
+            return {"error": [], "result": {"trades": {"T1": {
+                "pair": "XXBTZEUR", "type": "buy", "vol": "0.001",
+                "price": "80.0", "time": 1700000000}}}}
+        return {"error": ["EGeneral:Unknown"], "result": {}}
+
+    def _path(self, url):
+        return url.replace("https://api.kraken.com", "")
+
+    def get(self, url, params=None, timeout=None):
+        path = self._path(url)
+        self.calls.append(path)
+        return FakeResponse(self._payload(path))
+
+    def post(self, url, data=None, headers=None, timeout=None):
+        path = self._path(url)
+        self.calls.append(path)
+        self.posts.append((path, dict(data or {}), dict(headers or {})))
+        return FakeResponse(self._payload(path))
+
+
+def kraken_cfg(**overrides):
+    defaults = dict(
+        broker="kraken",
+        kraken_key="testkey",
+        kraken_secret=base64.b64encode(b"secret-material").decode(),
+        quote_currency="EUR",
+        universe=["XBTEUR"],
+        live_confirm=LIVE_CONFIRM_PHRASE,
+        limits=Limits(),
+    )
+    defaults.update(overrides)
+    return Config(**defaults)
+
+
+class TestKrakenAdapter(unittest.TestCase):
+    def setUp(self):
+        self.session = FakeKrakenSession()
+        self.broker = KrakenBroker(kraken_cfg(), session=self.session)
+
+    def test_kraken_is_always_real_money(self):
+        self.assertTrue(kraken_cfg().is_real_money)
+        self.assertFalse(kraken_cfg(live_confirm="").is_live)
+        self.assertTrue(kraken_cfg(live_confirm="").live_requested_but_unarmed)
+
+    def test_signing_sets_headers_and_increments_the_nonce(self):
+        self.broker.get_account()
+        private = [p for p in self.session.posts if "private" in p[0]]
+        self.assertTrue(private)
+        _path, body, headers = private[0]
+        self.assertEqual(headers["API-Key"], "testkey")
+        self.assertIn("API-Sign", headers)
+        self.assertIn("nonce", body)
+
+        first = int(private[0][1]["nonce"])
+        self.broker.get_account()
+        second = int([p for p in self.session.posts if "private" in p[0]][-1][1]["nonce"])
+        self.assertGreater(second, first)
+
+    def test_malformed_secret_is_reported_clearly(self):
+        broker = KrakenBroker(kraken_cfg(kraken_secret="not!base64!"), session=self.session)
+        with self.assertRaises(BrokerError) as ctx:
+            broker.get_account()
+        self.assertIn("base64", str(ctx.exception))
+
+    def test_pair_resolution_accepts_every_alias(self):
+        for alias in ("XBTEUR", "xbteur", "XXBTZEUR", "XBT/EUR"):
+            self.assertEqual(self.broker._pair(alias)["_key"], "XXBTZEUR")
+
+    def test_unknown_pair_raises_a_helpful_error(self):
+        with self.assertRaises(BrokerError) as ctx:
+            self.broker._pair("SPY")
+        self.assertIn("XBTEUR", str(ctx.exception))
+
+    def test_bars_are_parsed_and_sorted_oldest_first(self):
+        bars = self.broker.get_daily_bars("XBTEUR", 10)
+        self.assertEqual(len(bars), 10)
+        self.assertEqual([b.day for b in bars], sorted(b.day for b in bars))
+        self.assertEqual(bars[-1].close, 129.0)
+
+    def test_account_uses_eur_and_trade_balance(self):
+        account = self.broker.get_account()
+        self.assertEqual(account.currency, "EUR")
+        self.assertEqual(account.cash, 50.0)
+        self.assertEqual(account.equity, 55.0)
+        self.assertEqual(account.day_trade_count, 0, "spot crypto has no PDT rule")
+
+    def test_positions_are_derived_from_balances(self):
+        positions = self.broker.get_positions()
+        self.assertEqual(len(positions), 1)
+        self.assertEqual(positions[0].symbol, "XBTEUR")
+        self.assertAlmostEqual(positions[0].market_value, 10.0, places=6)
+
+    def test_dust_balances_are_not_positions(self):
+        self.session.btc_balance = "0.000001"  # worth 0.0001 EUR — dust
+        self.assertEqual(self.broker.get_positions(), [])
+
+    def test_average_entry_comes_from_trade_history(self):
+        self.assertAlmostEqual(self.broker._average_entry("XBTEUR", 0.001), 80.0, places=6)
+
+    def test_market_open_follows_system_status(self):
+        self.assertTrue(self.broker.is_market_open())
+        offline = KrakenBroker(
+            kraken_cfg(),
+            session=FakeKrakenSession(**{"/0/public/SystemStatus": {
+                "error": [], "result": {"status": "maintenance"}}}),
+        )
+        self.assertFalse(offline.is_market_open())
+
+    def test_notional_buy_converts_to_base_volume(self):
+        order = self.broker.submit_order("XBTEUR", "buy", notional=10.0)
+        self.assertAlmostEqual(order.qty, 0.1, places=8)  # 10 EUR / 100 EUR
+        body = [p for p in self.session.posts if p[0].endswith("AddOrder")][0][1]
+        self.assertEqual(body["type"], "buy")
+        self.assertEqual(body["ordertype"], "market")
+
+    def test_volume_is_rounded_down_never_up(self):
+        # 3.55 EUR / 100 = 0.0355; at 3 lot decimals that must floor to 0.035,
+        # spending 3.50 rather than rounding up past the cash on hand.
+        broker = KrakenBroker(kraken_cfg(), session=FakeKrakenSession(
+            **{"/0/public/AssetPairs": {"error": [], "result": {
+                "XXBTZEUR": {**ASSET_PAIRS["XXBTZEUR"], "lot_decimals": 3}}}}))
+        order = broker.submit_order("XBTEUR", "buy", notional=3.55)
+        self.assertAlmostEqual(order.qty, 0.035, places=8)
+        self.assertLessEqual(order.qty * 100.0, 3.55, "rounding must never overspend")
+
+    def test_flooring_to_zero_is_refused_rather_than_sent(self):
+        broker = KrakenBroker(kraken_cfg(), session=FakeKrakenSession(
+            **{"/0/public/AssetPairs": {"error": [], "result": {
+                "XXBTZEUR": {**ASSET_PAIRS["XXBTZEUR"], "lot_decimals": 1}}}}))
+        with self.assertRaises(BrokerError):
+            broker.submit_order("XBTEUR", "buy", notional=3.5)
+
+    def test_order_below_pair_minimum_is_refused_locally(self):
+        broker = KrakenBroker(kraken_cfg(), session=FakeKrakenSession(
+            **{"/0/public/AssetPairs": {"error": [], "result": {
+                "XXBTZEUR": {**ASSET_PAIRS["XXBTZEUR"], "ordermin": "1.0"}}}}))
+        with self.assertRaises(BrokerError) as ctx:
+            broker.submit_order("XBTEUR", "buy", notional=10.0)
+        self.assertIn("minimum", str(ctx.exception))
+
+    def test_order_below_cost_minimum_is_refused(self):
+        broker = KrakenBroker(kraken_cfg(), session=FakeKrakenSession(
+            **{"/0/public/AssetPairs": {"error": [], "result": {
+                "XXBTZEUR": {**ASSET_PAIRS["XXBTZEUR"], "costmin": "25"}}}}))
+        with self.assertRaises(BrokerError) as ctx:
+            broker.submit_order("XBTEUR", "buy", notional=10.0)
+        self.assertIn("below", str(ctx.exception))
+
+    def test_pair_limits_are_exposed_for_preflight(self):
+        ordermin, costmin = self.broker.pair_limits("XBTEUR")
+        self.assertAlmostEqual(ordermin, 0.00005)
+        self.assertAlmostEqual(costmin, 0.5)
+
+    def test_stop_order_uses_stop_loss_type_and_pair_decimals(self):
+        order = self.broker.submit_stop_order("XBTEUR", 0.001, 90.05)
+        body = [p for p in self.session.posts if p[0].endswith("AddOrder")][0][1]
+        self.assertEqual(body["ordertype"], "stop-loss")
+        self.assertEqual(body["type"], "sell")
+        # pair_decimals = 1, and the trigger is floored so it never lands
+        # above the stop the risk layer asked for.
+        self.assertEqual(body["price"], "90.0")
+        self.assertLessEqual(float(body["price"]), 90.05)
+        self.assertTrue(order.is_protective)
+
+    def test_open_orders_are_recognised_as_protective(self):
+        orders = self.broker.list_open_orders("XBTEUR")
+        self.assertEqual(len(orders), 1)
+        self.assertTrue(orders[0].is_protective)
+        self.assertEqual(orders[0].stop_price, 90.0)
+
+    def test_cancel_of_an_already_gone_order_is_not_an_error(self):
+        broker = KrakenBroker(kraken_cfg(), session=FakeKrakenSession(
+            **{"/0/private/CancelOrder": {"error": ["EOrder:Unknown order"], "result": {}}}))
+        broker.cancel_order("OXYZ-1")  # must not raise
+
+    def test_close_position_cancels_resting_orders_first(self):
+        self.broker.close_position("XBTEUR")
+        paths = [c for c in self.session.calls if "CancelOrder" in c or "AddOrder" in c]
+        self.assertLess(paths.index([p for p in paths if "CancelOrder" in p][0]),
+                        paths.index([p for p in paths if "AddOrder" in p][0]),
+                        "must cancel the resting stop before selling")
+
+    def test_invalid_key_produces_an_actionable_message(self):
+        broker = KrakenBroker(kraken_cfg(), session=FakeKrakenSession(
+            **{"/0/private/Balance": {"error": ["EAPI:Invalid key"], "result": {}}}))
+        with self.assertRaises(BrokerError) as ctx:
+            broker._balances()
+        self.assertIn("KRAKEN_KEY", str(ctx.exception))
+
+    def test_validate_flag_sends_no_real_order(self):
+        self.broker.submit_order("XBTEUR", "buy", notional=10.0, validate=True)
+        body = [p for p in self.session.posts if p[0].endswith("AddOrder")][0][1]
+        self.assertEqual(body.get("validate"), "true")
 
 
 if __name__ == "__main__":

@@ -38,9 +38,21 @@ class Strategy:
     name = "base"
     # How many daily bars the strategy needs before it will emit anything.
     warmup = 200
+    # Stops may never sit further than this below entry. Without the clamp a
+    # volatile instrument (crypto especially) can produce an ATR wide enough
+    # that `price - k*ATR` goes to zero or negative, which is not a stop at
+    # all — the position ends up unprotected.
+    max_stop_fraction = 0.25
 
     def evaluate(self, bars: Sequence[Bar], *, held: bool) -> Signal:
         raise NotImplementedError
+
+    def _clamp_stop(self, price: float, stop: float) -> float:
+        """Force the stop into (0, price). Returns the tightest sane value."""
+        floor = price * (1.0 - self.max_stop_fraction)
+        if stop <= 0 or stop >= price:
+            return floor
+        return max(stop, floor)
 
 
 class TrendStrategy(Strategy):
@@ -87,7 +99,7 @@ class TrendStrategy(Strategy):
 
         uptrend = fast_ma > slow_ma
         in_regime = price > regime_ma
-        stop_price = price - self.atr_stop_multiple * volatility
+        stop_price = self._clamp_stop(price, price - self.atr_stop_multiple * volatility)
 
         if held:
             if not uptrend:
@@ -151,7 +163,7 @@ class MeanReversionStrategy(Strategy):
         if None in (regime_ma, exit_ma, strength) or not volatility:
             return Signal(symbol, HOLD, 0.0, "indicators unavailable", price)
 
-        stop_price = price - self.atr_stop_multiple * volatility
+        stop_price = self._clamp_stop(price, price - self.atr_stop_multiple * volatility)
         in_regime = price > regime_ma
 
         if held:
@@ -171,9 +183,15 @@ class MeanReversionStrategy(Strategy):
         return Signal(symbol, HOLD, 0.0, why, price, stop_price)
 
 
-def build(name: str) -> Strategy:
+def build(name: str, max_stop_fraction: float | None = None) -> Strategy:
     if name == "trend":
-        return TrendStrategy()
-    if name == "meanrev":
-        return MeanReversionStrategy()
-    raise ValueError(f"unknown strategy {name!r}")
+        strategy: Strategy = TrendStrategy()
+    elif name == "meanrev":
+        strategy = MeanReversionStrategy()
+    else:
+        raise ValueError(f"unknown strategy {name!r}")
+    if max_stop_fraction is not None:
+        if not 0 < max_stop_fraction < 1:
+            raise ValueError(f"max_stop_fraction must be in (0, 1), got {max_stop_fraction}")
+        strategy.max_stop_fraction = max_stop_fraction
+    return strategy

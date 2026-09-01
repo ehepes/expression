@@ -71,6 +71,10 @@ class Limits:
     max_positions: int = 2
     # Fraction of equity risked per trade, measured to the stop price.
     risk_per_trade_pct: float = 1.5
+    # Hard ceiling on how far below entry a stop may sit. On a volatile
+    # instrument an ATR-derived stop can exceed the price itself, which
+    # silently leaves the position unprotected; this floors it.
+    max_stop_distance_pct: float = 25.0
 
     def validate(self) -> None:
         if self.min_order_notional < 1.0:
@@ -85,6 +89,10 @@ class Limits:
                 raise ConfigError(f"{name} must be in (0, 100], got {value}")
         if self.max_positions < 1:
             raise ConfigError("MAX_POSITIONS must be >= 1")
+        if not 0 < self.max_stop_distance_pct < 100:
+            raise ConfigError(
+                f"max_stop_distance_pct must be in (0, 100), got {self.max_stop_distance_pct}"
+            )
         if not 0 < self.risk_per_trade_pct <= 100:
             raise ConfigError(
                 f"risk_per_trade_pct must be in (0, 100], got {self.risk_per_trade_pct}"
@@ -95,6 +103,9 @@ class Limits:
 class Config:
     broker: str = "alpaca"
     alpaca_env: str = "paper"
+    kraken_key: str = ""
+    kraken_secret: str = ""
+    quote_currency: str = "EUR"
     alpaca_key_id: str = ""
     alpaca_secret_key: str = ""
     alpaca_data_feed: str = "iex"
@@ -106,13 +117,31 @@ class Config:
     db_path: str = "./agent.db"
 
     @property
+    def is_real_money(self) -> bool:
+        """Whether this configuration points at an account holding real money.
+
+        Kraken has no paper environment for spot trading, so selecting it is
+        by itself a real-money decision — there is no safe default to fall
+        back to the way there is with Alpaca.
+        """
+        if self.broker == "kraken":
+            return True
+        if self.broker == "alpaca":
+            return self.alpaca_env == "live"
+        return False
+
+    @property
+    def is_armed(self) -> bool:
+        return self.live_confirm == LIVE_CONFIRM_PHRASE
+
+    @property
     def is_live(self) -> bool:
-        """True only when real-money mode is both selected and explicitly armed."""
-        return self.alpaca_env == "live" and self.live_confirm == LIVE_CONFIRM_PHRASE
+        """True only when real money is both selected and explicitly armed."""
+        return self.is_real_money and self.is_armed
 
     @property
     def live_requested_but_unarmed(self) -> bool:
-        return self.alpaca_env == "live" and not self.is_live
+        return self.is_real_money and not self.is_armed
 
     @property
     def trading_base_url(self) -> str:
@@ -139,12 +168,13 @@ def load(dotenv_path: str | Path = ".env") -> Config:
         max_day_trades=_int("MAX_DAY_TRADES", 2),
         max_positions=_int("MAX_POSITIONS", 2),
         risk_per_trade_pct=_float("RISK_PER_TRADE_PCT", 1.5),
+        max_stop_distance_pct=_float("MAX_STOP_DISTANCE_PCT", 25.0),
     )
     limits.validate()
 
     broker = _str("BROKER", "alpaca").lower()
-    if broker not in {"alpaca", "sim"}:
-        raise ConfigError(f"BROKER must be 'alpaca' or 'sim', got {broker!r}")
+    if broker not in {"alpaca", "kraken", "sim"}:
+        raise ConfigError(f"BROKER must be 'alpaca', 'kraken' or 'sim', got {broker!r}")
 
     alpaca_env = _str("ALPACA_ENV", "paper").lower()
     if alpaca_env not in {"paper", "live"}:
@@ -157,6 +187,9 @@ def load(dotenv_path: str | Path = ".env") -> Config:
     cfg = Config(
         broker=broker,
         alpaca_env=alpaca_env,
+        kraken_key=_str("KRAKEN_KEY"),
+        kraken_secret=_str("KRAKEN_SECRET"),
+        quote_currency=_str("QUOTE_CURRENCY", "EUR").upper(),
         alpaca_key_id=_str("ALPACA_KEY_ID"),
         alpaca_secret_key=_str("ALPACA_SECRET_KEY"),
         alpaca_data_feed=_str("ALPACA_DATA_FEED", "iex").lower(),
@@ -171,6 +204,11 @@ def load(dotenv_path: str | Path = ".env") -> Config:
     if cfg.broker == "alpaca" and not (cfg.alpaca_key_id and cfg.alpaca_secret_key):
         raise ConfigError(
             "ALPACA_KEY_ID and ALPACA_SECRET_KEY are required when BROKER=alpaca. "
+            "Copy .env.example to .env and fill them in."
+        )
+    if cfg.broker == "kraken" and not (cfg.kraken_key and cfg.kraken_secret):
+        raise ConfigError(
+            "KRAKEN_KEY and KRAKEN_SECRET are required when BROKER=kraken. "
             "Copy .env.example to .env and fill them in."
         )
     if not cfg.universe:
