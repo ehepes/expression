@@ -23,6 +23,7 @@ from .brokers.base import BrokerError
 from .config import LIVE_CONFIRM_PHRASE, Config, ConfigError
 from .engine import Engine
 from .ledger import Ledger
+from .protection import StopBook
 from .strategy import build as build_strategy
 
 PASS = "  PASS"
@@ -210,6 +211,101 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_go_live(args: argparse.Namespace) -> int:
+    """Arming checklist. Verifies real-money readiness; places no orders."""
+    print("=== go-live checklist ===\n")
+    try:
+        cfg = _load(args)
+    except ConfigError as exc:
+        print(f"{FAIL}  config: {exc}")
+        return 1
+
+    blockers: list[str] = []
+
+    if cfg.broker != "alpaca":
+        blockers.append(f"BROKER is {cfg.broker!r}, not 'alpaca' — this is not a real account")
+        print(f"{FAIL}  BROKER={cfg.broker}")
+    else:
+        print(f"{PASS}  BROKER=alpaca")
+
+    if cfg.alpaca_env != "live":
+        blockers.append("ALPACA_ENV is not 'live' — set ALPACA_ENV=live in .env")
+        print(f"{FAIL}  ALPACA_ENV={cfg.alpaca_env} (still paper)")
+    else:
+        print(f"{PASS}  ALPACA_ENV=live -> {cfg.trading_base_url}")
+
+    if cfg.live_confirm != LIVE_CONFIRM_PHRASE:
+        blockers.append(f"LIVE_CONFIRM must be exactly: {LIVE_CONFIRM_PHRASE}")
+        print(f"{FAIL}  LIVE_CONFIRM is not set to the required phrase")
+    else:
+        print(f"{PASS}  LIVE_CONFIRM phrase accepted")
+
+    account = None
+    if cfg.broker == "alpaca" and cfg.alpaca_key_id and cfg.alpaca_secret_key:
+        try:
+            account = build_broker(cfg).get_account()
+            print(
+                f"{PASS}  connected — account {account.account_id or '(n/a)'} "
+                f"status={account.status}"
+            )
+        except BrokerError as exc:
+            blockers.append(f"cannot reach the live account: {exc}")
+            print(f"{FAIL}  connection: {exc}")
+
+    if account is not None:
+        print(f"{PASS}  REAL balance: equity {account.equity:.2f} {account.currency}, "
+              f"cash {account.cash:.2f}")
+        if account.equity <= 0:
+            blockers.append("the account holds no money — fund it before arming")
+            print(f"{FAIL}  account is unfunded")
+        if not account.tradable:
+            blockers.append(f"account not tradable (status={account.status})")
+            print(f"{FAIL}  account is not tradable")
+
+    limits = cfg.limits
+    print("\n  Limits that will bind every order:")
+    print(f"    most it can ever deploy      {limits.max_deployed:.2f}")
+    print(f"    largest single order         {limits.max_order_notional:.2f}")
+    print(f"    risked per trade             {limits.risk_per_trade_pct:.2f}% of equity")
+    print(f"    stops trading for the day at -{limits.daily_loss_limit_pct:.1f}%")
+    print(f"    stops permanently at         -{limits.max_drawdown_pct:.1f}% from peak")
+    print(f"    max orders per day           {limits.max_orders_per_day}")
+    print(f"    max open positions           {limits.max_positions}")
+
+    if account is not None and limits.max_deployed > account.equity:
+        print(f"\n{WARN}  MAX_DEPLOYED ({limits.max_deployed:.2f}) exceeds your balance "
+              f"({account.equity:.2f}); cash will bind first, but lower it to be explicit.")
+
+    if blockers:
+        print("\n  NOT ARMED. Fix these first:")
+        for item in blockers:
+            print(f"    - {item}")
+        return 1
+
+    worst = account.equity * limits.max_drawdown_pct / 100 if account else 0.0
+    print("\n  Everything above is real money.")
+    print(f"  The drawdown switch stops the agent after roughly {worst:.2f} "
+          f"{account.currency if account else ''} of losses, but nothing guarantees that")
+    print("  limit under a gap or an outage. You can lose the full balance.")
+
+    if not sys.stdin.isatty():
+        print(f"\n{FAIL}  go-live needs an interactive terminal to confirm.")
+        return 1
+
+    print(f"\n  Type the phrase to arm, or anything else to abort:\n    {LIVE_CONFIRM_PHRASE}")
+    try:
+        typed = input("  > ").strip()
+    except EOFError:
+        typed = ""
+    if typed != LIVE_CONFIRM_PHRASE:
+        print("\n  Aborted. Nothing was armed.")
+        return 1
+
+    print("\n  ARMED. The next `python -m agent run` will place real orders.")
+    print("  Stop it at any time with `python -m agent halt` (or `touch HALT`).")
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     try:
         cfg = _load(args)
@@ -238,6 +334,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"  orders today {ledger.orders_today()} / {cfg.limits.max_orders_per_day}")
         print(f"  day trades {account.day_trade_count} / {cfg.limits.max_day_trades}")
 
+        stops = StopBook(ledger)
         if positions:
             print("  positions:")
             for position in positions:
@@ -245,8 +342,26 @@ def cmd_status(args: argparse.Namespace) -> int:
                     f"    {position.symbol:<6} {position.qty:.6f} @ {position.avg_entry_price:.2f}"
                     f"   value {position.market_value:.2f}   P/L {position.unrealized_pl:+.2f}"
                 )
+                state = stops.get(position.symbol)
+                if state:
+                    print(
+                        f"           stop {state.stop_price:.2f} "
+                        f"({state.distance_pct:.1f}% below peak {state.high_water:.2f})"
+                    )
+                else:
+                    print("           stop: NONE ON FILE — unprotected")
         else:
             print("  positions: none")
+
+        try:
+            resting = broker.list_open_orders()
+        except (BrokerError, AttributeError):
+            resting = []
+        protective = [order for order in resting if order.is_protective]
+        if protective:
+            print("  resting protective stops:")
+            for order in protective:
+                print(f"    {order.symbol:<6} sell stop @ {order.stop_price:.2f}  ({order.status})")
 
         orders = ledger.recent_orders(10)
         if orders:
@@ -306,6 +421,9 @@ def build_parser() -> argparse.ArgumentParser:
     backtest.add_argument("--cost-bps", type=float, default=5.0, help="slippage per fill")
     backtest.set_defaults(func=cmd_backtest)
 
+    subparsers.add_parser(
+        "go-live", help="real-money arming checklist (places no orders)"
+    ).set_defaults(func=cmd_go_live)
     subparsers.add_parser("status", help="account, positions and recent orders").set_defaults(
         func=cmd_status
     )

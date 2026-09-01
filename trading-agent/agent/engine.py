@@ -20,6 +20,7 @@ from .brokers import build as build_broker
 from .brokers.base import Account, Broker, BrokerError, Position
 from .config import Config
 from .ledger import Ledger
+from .protection import StopBook
 from .risk import RiskEngine, Veto
 
 
@@ -55,6 +56,7 @@ class CycleReport:
     positions: list[Position] = field(default_factory=list)
     halted: list[Veto] = field(default_factory=list)
     actions: list[Action] = field(default_factory=list)
+    protective_stops: list[tuple[str, float]] = field(default_factory=list)
     market_open: bool = True
     error: str | None = None
 
@@ -83,6 +85,8 @@ class CycleReport:
         lines.extend(action.describe() for action in self.actions)
         if not self.actions and not self.halted and not self.error:
             lines.append("  no actionable signals")
+        for symbol, stop in self.protective_stops:
+            lines.append(f"  [STOP] resting sell stop armed on {symbol} at {stop:.2f}")
         return "\n".join(lines)
 
 
@@ -99,6 +103,7 @@ class Engine:
         self.ledger = ledger or Ledger(cfg.db_path)
         self.strategy = strategy_mod.build(cfg.strategy)
         self.risk = RiskEngine(cfg, self.ledger)
+        self.stops = StopBook(self.ledger)
 
     @property
     def mode(self) -> str:
@@ -159,42 +164,181 @@ class Engine:
             )
             return report
 
-        signals = self._score_universe(report.positions)
-
         held = {position.symbol for position in report.positions if position.qty > 0}
-        exits = [s for s in signals if s.action == strategy_mod.EXIT and s.symbol in held]
+        # Forget stops for anything no longer held, so a stale stop can never
+        # fire against a position that was closed elsewhere.
+        self.stops.sync(held)
+
+        # Resting protective stops reserve the shares, which would make an exit
+        # fail for insufficient quantity. Clear them, trade, then re-arm.
+        if not dry_run:
+            self._clear_protective_orders(held, report)
+
+        signals = self._score_universe(report.positions)
+        by_symbol = {signal.symbol: signal for signal in signals}
+
+        # Advance every trailing stop and find the breaches before deciding
+        # anything else — a breach outranks whatever the strategy wants.
+        breached = self._refresh_stops(report.positions, by_symbol)
+
+        strategy_exits = [
+            s for s in signals
+            if s.action == strategy_mod.EXIT and s.symbol in held and s.symbol not in breached
+        ]
         entries = sorted(
             (s for s in signals if s.action == strategy_mod.ENTER and s.symbol not in held),
             key=lambda s: s.score,
             reverse=True,
         )
-        holds = [s for s in signals if s.action == strategy_mod.HOLD]
+        holds = [
+            s for s in signals
+            if s.action == strategy_mod.HOLD and s.symbol not in breached
+        ]
 
-        # 1. Exits first — always reduce risk before adding it.
-        for signal in exits:
+        # 1. Stop breaches first. These are not negotiable.
+        for symbol, (state, breach_price) in breached.items():
+            signal = by_symbol.get(symbol) or strategy_mod.Signal(
+                symbol, strategy_mod.EXIT, 0.0, "stop breached", breach_price
+            )
+            reason = (
+                f"STOP HIT: price {breach_price:.2f} <= stop {state.stop_price:.2f} "
+                f"(entry {state.entry_price:.2f}, peak {state.high_water:.2f})"
+            )
+            report.actions.append(
+                self._do_exit(
+                    run_id,
+                    signal,
+                    account,
+                    dry_run=dry_run,
+                    report=report,
+                    reason_override=reason,
+                    force=True,
+                )
+            )
+
+        # 2. Then ordinary strategy exits — always reduce risk before adding it.
+        for signal in strategy_exits:
             report.actions.append(
                 self._do_exit(run_id, signal, account, dry_run=dry_run, report=report)
             )
 
-        # 2. Then entries, best-scoring first.
+        # 3. Then entries, best-scoring first.
         for signal in entries:
             report.actions.append(
                 self._do_entry(run_id, signal, account, dry_run=dry_run, report=report)
             )
 
-        # 3. Record the rest so the journal explains inaction too.
+        # 4. Record the rest so the journal explains inaction too.
         for signal in holds:
+            state = self.stops.get(signal.symbol)
+            reason = signal.reason
+            if state and signal.symbol in held:
+                reason = f"{reason} (stop {state.stop_price:.2f})"
             self.ledger.record_decision(
                 run_id,
                 symbol=signal.symbol,
                 action="hold",
-                reason=signal.reason,
+                reason=reason,
                 score=signal.score,
                 price=signal.price,
             )
-            report.actions.append(Action(signal.symbol, "hold", signal.reason))
+            report.actions.append(Action(signal.symbol, "hold", reason))
+
+        # 5. Re-arm broker-side protection on whatever is still open, so the
+        #    position is guarded even if this process never runs again.
+        if not dry_run:
+            self._arm_protective_stops(report, run_id)
 
         return report
+
+    # -- stop-loss plumbing ------------------------------------------------
+
+    def _refresh_stops(
+        self,
+        positions: list[Position],
+        by_symbol: dict[str, strategy_mod.Signal],
+    ) -> dict[str, tuple["object", float]]:
+        """Ratchet every trailing stop; return breaches with the breaching price."""
+        breached: dict[str, tuple[object, float]] = {}
+        for position in positions:
+            if position.qty <= 0:
+                continue
+            signal = by_symbol.get(position.symbol)
+            # Prefer the live traded price over the last daily close. A stop
+            # checked against yesterday's close is a stop that fires a day
+            # late, which is the same as not having one.
+            price = 0.0
+            try:
+                price = self.broker.latest_price(position.symbol)
+            except (BrokerError, AttributeError):
+                price = 0.0
+            if price <= 0 and signal and signal.price > 0:
+                price = signal.price
+            if price <= 0:
+                continue
+            state = self.stops.update(
+                position.symbol,
+                price,
+                signal.stop_price if signal else None,
+                entry_price=position.avg_entry_price,
+            )
+            if state and state.breached(price):
+                breached[position.symbol] = (state, price)
+        return breached
+
+    def _clear_protective_orders(self, held: set[str], report: CycleReport) -> None:
+        """Cancel resting protective stops so the shares are free to trade."""
+        canceller = getattr(self.broker, "cancel_orders_for", None)
+        if not callable(canceller):
+            return
+        for symbol in sorted(held):
+            try:
+                canceller(symbol)
+            except BrokerError as exc:
+                report.actions.append(
+                    Action(symbol, "hold", "stop cleanup", blocked_by=f"could not cancel resting orders: {exc}")
+                )
+
+    def _arm_protective_stops(self, report: CycleReport, run_id: int) -> None:
+        """Place a resting sell stop under every open position."""
+        placer = getattr(self.broker, "submit_stop_order", None)
+        if not callable(placer):
+            return
+
+        try:
+            positions = self.broker.get_positions()
+        except BrokerError:
+            positions = report.positions
+
+        for position in positions:
+            if position.qty <= 0:
+                continue
+            state = self.stops.get(position.symbol)
+            if state is None or state.stop_price <= 0:
+                continue
+            try:
+                order = placer(position.symbol, position.qty, state.stop_price)
+            except BrokerError as exc:
+                report.actions.append(
+                    Action(
+                        position.symbol,
+                        "hold",
+                        "protective stop",
+                        blocked_by=f"could not arm stop at {state.stop_price:.2f}: {exc}",
+                    )
+                )
+                continue
+            self.ledger.record_order(
+                run_id,
+                broker_order_id=order.order_id,
+                symbol=order.symbol,
+                side="sell",
+                notional=None,
+                qty=order.qty,
+                status=f"protective-{order.status}",
+                fill_price=None,
+            )
+            report.protective_stops.append((position.symbol, state.stop_price))
 
     # -- internals ---------------------------------------------------------
 
@@ -225,29 +369,34 @@ class Engine:
         *,
         dry_run: bool,
         report: CycleReport,
+        reason_override: str | None = None,
+        force: bool = False,
     ) -> Action:
-        veto = self.risk.check_exit(signal.symbol, account)
+        reason = reason_override or signal.reason
+        # `force` is set for stop breaches. A pattern-day-trader flag is a bad
+        # outcome; riding an unstopped loss is a worse one, so the stop wins.
+        veto = None if force else self.risk.check_exit(signal.symbol, account)
         if veto:
             self.ledger.record_decision(
                 run_id,
                 symbol=signal.symbol,
                 action="exit",
-                reason=signal.reason,
+                reason=reason,
                 price=signal.price,
                 block_reason=veto.reason,
             )
-            return Action(signal.symbol, "exit", signal.reason, blocked_by=veto.reason)
+            return Action(signal.symbol, "exit", reason, blocked_by=veto.reason)
 
         if dry_run:
             self.ledger.record_decision(
                 run_id,
                 symbol=signal.symbol,
                 action="exit",
-                reason=signal.reason,
+                reason=reason,
                 price=signal.price,
                 block_reason="dry run",
             )
-            return Action(signal.symbol, "exit", signal.reason, blocked_by="dry run — not sent")
+            return Action(signal.symbol, "exit", reason, blocked_by="dry run — not sent")
 
         try:
             order = self.broker.close_position(signal.symbol)
@@ -256,11 +405,11 @@ class Engine:
                 run_id,
                 symbol=signal.symbol,
                 action="exit",
-                reason=signal.reason,
+                reason=reason,
                 price=signal.price,
                 block_reason=f"broker rejected: {exc}",
             )
-            return Action(signal.symbol, "exit", signal.reason, blocked_by=f"broker rejected: {exc}")
+            return Action(signal.symbol, "exit", reason, blocked_by=f"broker rejected: {exc}")
 
         self.ledger.record_order(
             run_id,
@@ -276,12 +425,13 @@ class Engine:
             run_id,
             symbol=signal.symbol,
             action="exit",
-            reason=signal.reason,
+            reason=reason,
             price=signal.price,
             executed=True,
         )
+        self.stops.close(signal.symbol)
         report.positions = [p for p in report.positions if p.symbol != signal.symbol]
-        return Action(signal.symbol, "exit", signal.reason, executed=True, order_id=order.order_id)
+        return Action(signal.symbol, "exit", reason, executed=True, order_id=order.order_id)
 
     def _do_entry(
         self,
@@ -363,6 +513,12 @@ class Engine:
             price=signal.price,
             executed=True,
         )
+        # Record the protective stop that justified this position size. Without
+        # this the stop would be recomputed from scratch every cycle and would
+        # never actually fire.
+        if signal.stop_price and signal.price > 0:
+            self.stops.open_position(signal.symbol, signal.price, signal.stop_price)
+
         # Reflect the new position immediately so later entries in this same
         # cycle see the reduced headroom.
         report.positions.append(

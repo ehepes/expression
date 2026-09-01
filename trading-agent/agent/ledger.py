@@ -160,8 +160,16 @@ class Ledger:
         self._conn.commit()
 
     def orders_today(self) -> int:
+        """Orders that count against the daily budget.
+
+        Protective stops are excluded: they are re-armed on every cycle, so
+        counting them would exhaust the budget without a single new decision
+        having been made.
+        """
         row = self._conn.execute(
-            "SELECT COUNT(*) AS n FROM orders WHERE day = ?", (_today(),)
+            "SELECT COUNT(*) AS n FROM orders WHERE day = ?"
+            " AND (status IS NULL OR status NOT LIKE 'protective-%')",
+            (_today(),),
         ).fetchone()
         return int(row["n"])
 

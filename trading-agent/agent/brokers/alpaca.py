@@ -226,25 +226,81 @@ class AlpacaBroker:
             body["qty"] = f"{qty:.9f}".rstrip("0").rstrip(".")
 
         raw = self._trading("POST", "/v2/orders", json=body)
+        return self._to_order(raw, fallback_symbol=symbol, fallback_side=side)
+
+    def _to_order(
+        self, raw: dict, *, fallback_symbol: str = "", fallback_side: str = ""
+    ) -> Order:
         return Order(
             order_id=str(raw.get("id", "")),
-            symbol=symbol.upper(),
-            side=side,
-            notional=notional,
-            qty=qty,
+            symbol=str(raw.get("symbol") or fallback_symbol).upper(),
+            side=str(raw.get("side") or fallback_side),
+            notional=_num(raw.get("notional"), 0.0) or None,
+            qty=_num(raw.get("qty"), 0.0) or None,
             status=str(raw.get("status", "unknown")),
             submitted_at=_parse_ts(raw.get("submitted_at")),
             filled_avg_price=_num(raw.get("filled_avg_price"), 0.0) or None,
+            order_type=str(raw.get("type") or raw.get("order_type") or "market"),
+            stop_price=_num(raw.get("stop_price"), 0.0) or None,
         )
 
+    def list_open_orders(self, symbol: str | None = None) -> list[Order]:
+        params: dict[str, Any] = {"status": "open", "limit": 100, "nested": "false"}
+        if symbol:
+            params["symbols"] = symbol.upper()
+        raw = self._trading("GET", "/v2/orders", params=params) or []
+        return [self._to_order(item) for item in raw]
+
+    def cancel_order(self, order_id: str) -> None:
+        """Cancel a working order.
+
+        A 404/422 means the order already filled or was cancelled — that is the
+        outcome we wanted, so it is not an error.
+        """
+        url = f"{self._cfg.trading_base_url}/v2/orders/{order_id}"
+        try:
+            self._request("DELETE", url)
+        except BrokerError as exc:
+            message = str(exc)
+            if "404" in message or "422" in message:
+                return
+            raise
+
+    def submit_stop_order(self, symbol: str, qty: float, stop_price: float) -> Order:
+        """Rest a protective sell stop.
+
+        Alpaca supports fractional stop orders, but only with
+        `time_in_force=day` — so the order dies at the close and the agent
+        re-arms it on the next cycle. It therefore protects during sessions,
+        not across overnight gaps.
+        """
+        if qty <= 0:
+            raise BrokerError(f"cannot place a stop for non-positive qty {qty}")
+        if stop_price <= 0:
+            raise BrokerError(f"invalid stop price {stop_price}")
+
+        body = {
+            "symbol": symbol.upper(),
+            "side": "sell",
+            "type": "stop",
+            "time_in_force": "day",
+            "qty": f"{qty:.9f}".rstrip("0").rstrip("."),
+            "stop_price": f"{stop_price:.2f}",
+        }
+        raw = self._trading("POST", "/v2/orders", json=body)
+        return self._to_order(raw, fallback_symbol=symbol, fallback_side="sell")
+
     def close_position(self, symbol: str) -> Order:
+        # A resting sell order reserves the shares, so a close would be
+        # rejected for insufficient quantity. Clear the way first.
+        self.cancel_orders_for(symbol)
         raw = self._trading("DELETE", f"/v2/positions/{symbol.upper()}") or {}
-        return Order(
-            order_id=str(raw.get("id", "")),
-            symbol=symbol.upper(),
-            side="sell",
-            notional=None,
-            qty=_num(raw.get("qty")) or None,
-            status=str(raw.get("status", "accepted")),
-            submitted_at=_parse_ts(raw.get("submitted_at")),
-        )
+        return self._to_order(raw, fallback_symbol=symbol, fallback_side="sell")
+
+    def cancel_orders_for(self, symbol: str) -> int:
+        """Cancel every working order on `symbol`. Returns how many were cancelled."""
+        cancelled = 0
+        for order in self.list_open_orders(symbol):
+            self.cancel_order(order.order_id)
+            cancelled += 1
+        return cancelled

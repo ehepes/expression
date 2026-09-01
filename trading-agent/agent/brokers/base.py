@@ -58,6 +58,13 @@ class Order:
     status: str
     submitted_at: datetime | None = None
     filled_avg_price: float | None = None
+    order_type: str = "market"
+    stop_price: float | None = None
+
+    @property
+    def is_protective(self) -> bool:
+        """A resting sell stop the agent placed to guard an open position."""
+        return self.side == "sell" and self.order_type in {"stop", "stop_limit"}
 
 
 @dataclass(frozen=True)
@@ -102,6 +109,18 @@ class Broker(Protocol):
 
     def close_position(self, symbol: str) -> Order:
         """Liquidate the whole position in `symbol`."""
+
+    def latest_price(self, symbol: str) -> float:
+        """Most recent traded price."""
+
+    def list_open_orders(self, symbol: str | None = None) -> list[Order]:
+        """Orders still working at the venue."""
+
+    def cancel_order(self, order_id: str) -> None:
+        """Cancel a working order. Must not raise if it already filled."""
+
+    def submit_stop_order(self, symbol: str, qty: float, stop_price: float) -> Order:
+        """Rest a protective sell stop against an open position."""
 
 
 def latest_close(bars: Sequence[Bar]) -> float:

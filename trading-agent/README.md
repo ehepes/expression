@@ -5,38 +5,43 @@ universe of instruments once per cycle, and places orders inside hard limits it
 is not allowed to exceed.
 
 It defaults to **paper money** and will not touch real money until you
-explicitly arm it. Read [Before you fund anything](#before-you-fund-anything)
-first — it is the most useful section in this file.
+explicitly arm it. Read [the three costs](#the-three-costs-that-decide-everything-at-50)
+first — at a €50 account size that section decides more than the strategy does.
 
 ---
 
-## Before you fund anything
+## The three costs that decide everything at €50
 
-Three things you should know before running this with €50 of your own money.
+Trading costs are not one number. At this account size all three matter, and
+the third one is the one nobody mentions until it is too late:
 
-**1. Nobody can promise you profit, and this agent does not.** The strategies
-here are public, well-documented techniques. They have no private edge. Over
-any given month the most likely outcome is a small loss, the second most likely
-is a small gain. Systematic trend following has historically produced positive
-returns over multi-year horizons, with long losing stretches in between; it is
-not a way to turn €50 into meaningful money.
+| | Cost to trade | Cost in (FX) | **Cost to get your money out** |
+|---|---|---|---|
+| **Alpaca** | €0 commission | EUR→USD, ~1.5% | **$50 international wire** |
+| **IBKR Ireland** | ~€1.25 min/order | none if you trade EU stocks | 1 free withdrawal per calendar month |
+| **Kraken** | 0.25–0.40% | none, EUR-native | ~€1 SEPA |
 
-**2. At €50, the arithmetic is unforgiving.** A genuinely excellent 20% annual
-return on €50 is **€10 a year**. That is the realistic ceiling on the upside,
-and it is why broker choice below is dominated by one question: *what does a
-trade cost?* On a broker charging a €1.25 minimum commission, a €15 position
-pays ~8% in commission round-trip — the strategy would need to be right by 8%
-before you break even. That is not a strategy problem you can fix with better
-code. It is why the recommendation below is a commission-free broker.
+Alpaca is the cheapest place to *trade* and the most expensive place to
+*leave*. Withdrawing €50 by international wire costs $50 — the whole account.
+That is not a reason to avoid it, but it changes what funding it means: money
+you put into Alpaca is money you should plan to leave there and add to, not
+money you expect to move back to your Irish bank next month.
 
-**3. Treat the €50 as the cost of learning, not as capital.** The right way to
-use this is to run it on paper for a few weeks, read the journal it writes,
-and decide from evidence whether you want to fund it at all.
+If you want the €50 to be genuinely round-trippable, the euro-native options
+(Kraken, or IBKR with its one free monthly withdrawal) are the ones where all
+three costs stay small.
 
-If any of that changes your mind, that is a good outcome. The paper mode costs
-nothing and teaches the same lessons.
+### What the upside actually looks like
 
----
+A genuinely excellent 20% year on €50 is **€10**. That is the realistic
+ceiling, and it is why the table above dominates the decision — a €1.25
+commission on a €15 position is 8% round-trip, which no strategy overcomes.
+The agent defaults to a commission-free venue for exactly this reason.
+
+Nothing here has a private edge. The strategies are public techniques,
+implemented carefully and with the costs counted honestly. Over any given
+month the most likely outcome is a small loss; the second most likely is a
+small gain.
 
 ## Broker options in Ireland
 
@@ -72,22 +77,23 @@ Two caveats to verify yourself, because they depend on your circumstances:
 
 ---
 
-## What I could not do for you
+## Credentials
 
-You offered to give me access to your account. I want to be straight about
-this: **I cannot hold your broker credentials, and you should not give them to
-me or paste them into any chat.** API keys are bearer credentials — anything
-that has them can move your money, and a chat transcript is not a safe place
-to keep one.
+**I cannot hold your API keys, and you should not paste them into a chat.**
+They are bearer credentials — anything holding them can move your money, and a
+transcript is not a safe place to keep one.
 
-What I built instead is the whole system, ready to connect, with the credential
-step left where it belongs: on your machine, in a `.env` file that is
-gitignored. You paste your keys in once, and the `preflight` command proves the
-connection works end to end and tells you exactly what is wrong if it does not.
-That is the "make sure you're able to connect" part of your request — it just
-runs on your side of the wall rather than mine.
+So the credential step runs on your machine, in a gitignored `.env`, and the
+agent proves the connection itself:
 
----
+```bash
+python -m agent preflight   # verifies credentials, account, data, fractionability
+python -m agent go-live     # real-money arming checklist
+```
+
+`preflight` tells you exactly what is wrong if anything is. `go-live` shows
+your real balance and the limits that will bind, then requires you to type a
+confirmation phrase before anything is armed.
 
 ## Setup
 
@@ -131,6 +137,7 @@ python -m agent run                  # one decision cycle
 python -m agent run --loop 900       # every 15 minutes
 python -m agent status               # account, positions, recent orders
 python -m agent backtest --bars 500  # replay the strategy over history
+python -m agent go-live              # real-money arming checklist
 python -m agent halt                 # stop trading immediately
 python -m agent resume               # clear the halt
 ```
@@ -148,18 +155,52 @@ Under cron, one pass shortly after the US open is a reasonable cadence:
 
 ## Going live
 
-Real money requires **three** separate deliberate steps, so it cannot happen by
-accident or typo:
+Funding, in order:
+
+1. Open a **live** account at app.alpaca.markets and complete the **W-8BEN**
+   (it cuts US dividend withholding from 30% to 15% under the Ireland–US
+   treaty). Irish CGT applies to your gains regardless of size.
+2. Fund it. From Ireland that means EUR→USD conversion; send **euros** from a
+   euro account, not another currency, or the transfer fails. Alpaca holds USD
+   only.
+3. Re-read the withdrawal line in the table at the top before you send money.
+
+Then arm it. Real money takes **four** deliberate steps, so it cannot happen
+by accident:
 
 1. `ALPACA_ENV=live`
-2. A live key pair in `ALPACA_KEY_ID` / `ALPACA_SECRET_KEY`
-3. `LIVE_CONFIRM=I ACCEPT REAL MONEY LOSS` — the exact phrase, case-sensitive
+2. A live key pair (different from your paper keys)
+3. `LIVE_CONFIRM=I ACCEPT REAL MONEY LOSS` — exact, case-sensitive
+4. `python -m agent go-live` — which shows your real balance and makes you type
+   the phrase back
 
-Miss any one and the agent halts on preflight with `live_unarmed` and places no
-orders. Set `MAX_DEPLOYED=50` so it can never deploy more than you intended,
-even if the account later holds more.
+Miss any one and the agent halts with `live_unarmed` and places no orders.
+There is a test asserting exactly that.
 
----
+Set `MAX_DEPLOYED` to the amount you are actually willing to lose. It caps
+deployment even if the account later holds more.
+
+## Stop losses
+
+Every position gets a stop, recorded when it opens and persisted in the
+ledger. It is a **ratchet**: it follows the high-water price up and never
+moves down, so a position that runs up locks in the gain.
+
+The stop is enforced in two independent places:
+
+- **At cycle time**, against the *live* price rather than the last daily
+  close. A breach is a forced exit that overrides the strategy — and overrides
+  the day-trade guard, because a pattern-day-trader flag is a bad outcome and
+  an unstopped loss is a worse one.
+- **At the broker**, as a resting sell stop, so the position is guarded even
+  if this process never runs again.
+
+**The limit you need to know:** Alpaca supports fractional stop orders only
+with `time_in_force=day`, so the resting stop expires at the close and is
+re-armed on the next cycle. It protects you *during* sessions, not across
+overnight gaps. If the market gaps down through your stop overnight, you exit
+below it. No retail setup avoids that; be aware of it rather than surprised by
+it.
 
 ## Safety limits
 
@@ -179,7 +220,7 @@ against a freshly fetched account immediately before every order.
 | `MAX_POSITIONS` | 2 | Simultaneous open positions |
 | `HALT_FILE` | `./HALT` | If this file exists, no orders are placed, full stop |
 
-Beyond those: the agent is **long-only**, never uses leverage or margin, never
+Stops are covered in their own section above. Beyond those: the agent is **long-only**, never uses leverage or margin, never
 shorts, trades only whole-market ETFs by default, and places only day orders —
 an order that did not fill today was based on stale information, so it expires
 rather than resting.
@@ -217,11 +258,12 @@ agent/
   indicators.py   SMA / ATR / RSI, returning None until fully warmed up
   strategy.py     signal generation; never sizes, never touches a broker
   risk.py         the layer allowed to say no
+  protection.py   persistent ratcheting stops; the loss limiter
   ledger.py       SQLite journal of every decision, refusal and fill
   engine.py       the decision loop; exits processed before entries, always
   backtest.py     next-open fills, costs on both sides
-  cli.py          preflight / run / status / backtest / halt / resume
-tests/            53 tests, no network required
+  cli.py          preflight / go-live / run / status / backtest / halt / resume
+tests/            80 tests, no network required
 ```
 
 Adding another broker means writing one file against `brokers/base.Broker`. The
@@ -235,11 +277,12 @@ engine, risk layer and strategies do not change.
 python -m unittest discover -s tests -t .
 ```
 
-53 tests, fully offline. They cover indicator warm-up, the risk vetoes
+80 tests, fully offline. They cover indicator warm-up, the risk vetoes
 individually, that live mode without the confirmation phrase places no orders,
 that a cycle never re-buys an open position, that the deployment cap and
-position cap hold across repeated cycles, and that the halt file stops
-everything.
+position cap hold across repeated cycles, that the halt file stops everything,
+and that stops ratchet up, never loosen, fire on a breach, and bank a gain
+when they trail above the entry price.
 
 Try the whole pipeline right now without any credentials:
 
@@ -257,6 +300,9 @@ BROKER=sim UNIVERSE=SPY,QQQ,IWM python -m agent run --dry-run
 - [Interactive Brokers Ireland — commissions](https://www.interactivebrokers.ie/en/pricing/commissions-stocks.php)
 - [IBKR Web API documentation](https://www.interactivebrokers.com/campus/ibkr-api-page/webapi-doc/)
 - [Kraken — MiCA licence via the Central Bank of Ireland](https://casptracker.eu/exchange/kraken/)
+- [Alpaca — transfer fees outside the US](https://alpaca.markets/support/fees-transfers-outside-us)
+- [Alpaca — funding as a non-US resident](https://alpaca.markets/support/international-use-fund-account)
+- [Alpaca — fractional trading order types](https://docs.alpaca.markets/us/docs/fractional-trading)
 
 ---
 

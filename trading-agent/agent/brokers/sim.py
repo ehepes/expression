@@ -67,8 +67,11 @@ class SimBroker:
         )
         self._positions: dict[str, list[float]] = {}  # symbol -> [qty, cost_basis]
         self.orders: list[Order] = []
+        self.open_orders: list[Order] = []
         self.market_open = True
         self._bar_cache: dict[str, list[Bar]] = {}
+        # Tests move prices through this to exercise stop-breach handling.
+        self.price_overrides: dict[str, float] = {}
 
     # -- data --------------------------------------------------------------
 
@@ -79,6 +82,9 @@ class SimBroker:
         return self._bar_cache[key][-limit:]
 
     def latest_price(self, symbol: str) -> float:
+        override = self.price_overrides.get(symbol.upper())
+        if override is not None:
+            return override
         bars = self.get_daily_bars(symbol, 1)
         if not bars:
             raise BrokerError(f"no price for {symbol}")
@@ -184,7 +190,46 @@ class SimBroker:
 
     def close_position(self, symbol: str) -> Order:
         key = symbol.upper()
+        self.cancel_orders_for(key)
         held_qty, _cost = self._positions.get(key, [0.0, 0.0])
         if held_qty <= 0:
             raise BrokerError(f"no position in {key}")
         return self.submit_order(key, "sell", qty=held_qty)
+
+    # -- resting orders ----------------------------------------------------
+
+    def list_open_orders(self, symbol: str | None = None) -> list[Order]:
+        if symbol is None:
+            return list(self.open_orders)
+        key = symbol.upper()
+        return [order for order in self.open_orders if order.symbol == key]
+
+    def cancel_order(self, order_id: str) -> None:
+        self.open_orders = [o for o in self.open_orders if o.order_id != order_id]
+
+    def cancel_orders_for(self, symbol: str) -> int:
+        key = symbol.upper()
+        before = len(self.open_orders)
+        self.open_orders = [o for o in self.open_orders if o.symbol != key]
+        return before - len(self.open_orders)
+
+    def submit_stop_order(self, symbol: str, qty: float, stop_price: float) -> Order:
+        key = symbol.upper()
+        if qty <= 0:
+            raise BrokerError(f"cannot place a stop for non-positive qty {qty}")
+        held_qty, _cost = self._positions.get(key, [0.0, 0.0])
+        if held_qty <= 0:
+            raise BrokerError(f"no position in {key} to protect")
+        order = Order(
+            order_id=f"sim-stop-{len(self.orders) + len(self.open_orders) + 1}",
+            symbol=key,
+            side="sell",
+            notional=None,
+            qty=qty,
+            status="new",
+            submitted_at=datetime.now(timezone.utc),
+            order_type="stop",
+            stop_price=stop_price,
+        )
+        self.open_orders.append(order)
+        return order

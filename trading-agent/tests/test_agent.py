@@ -15,6 +15,7 @@ from agent.brokers.sim import SimBroker, synthetic_bars
 from agent.config import LIVE_CONFIRM_PHRASE, Config, ConfigError, Limits
 from agent.engine import Engine
 from agent.ledger import Ledger
+from agent.protection import StopBook, StopState
 from agent.risk import RiskEngine
 
 
@@ -471,6 +472,251 @@ class TestBacktest(unittest.TestCase):
         cheap = run_backtest(bars, strategy.TrendStrategy(), cost_bps=0.0)
         pricey = run_backtest(bars, strategy.TrendStrategy(), cost_bps=100.0)
         self.assertGreaterEqual(cheap.final_equity, pricey.final_equity)
+
+
+class TestStopBook(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.ledger = Ledger(os.path.join(self._tmp.name, "s.db"))
+        self.stops = StopBook(self.ledger)
+
+    def tearDown(self):
+        self.ledger.close()
+        self._tmp.cleanup()
+
+    def test_open_position_records_the_stop(self):
+        state = self.stops.open_position("SPY", entry_price=100.0, stop_price=90.0)
+        self.assertEqual(state.stop_price, 90.0)
+        self.assertEqual(self.stops.get("SPY").stop_price, 90.0)
+
+    def test_stop_ratchets_up_with_price(self):
+        self.stops.open_position("SPY", 100.0, 90.0)
+        state = self.stops.update("SPY", price=120.0, candidate_stop=108.0)
+        self.assertEqual(state.stop_price, 108.0)
+        self.assertEqual(state.high_water, 120.0)
+
+    def test_stop_never_loosens_when_price_falls(self):
+        self.stops.open_position("SPY", 100.0, 90.0)
+        self.stops.update("SPY", price=120.0, candidate_stop=108.0)
+        # Price collapses; the strategy's fresh ATR stop is far lower.
+        state = self.stops.update("SPY", price=95.0, candidate_stop=85.0)
+        self.assertEqual(state.stop_price, 108.0, "stop must never move down")
+        self.assertEqual(state.high_water, 120.0, "high-water must not reset")
+
+    def test_candidate_above_current_price_is_rejected(self):
+        self.stops.open_position("SPY", 100.0, 90.0)
+        state = self.stops.update("SPY", price=100.0, candidate_stop=105.0)
+        self.assertEqual(state.stop_price, 90.0)
+
+    def test_breach_detection(self):
+        state = self.stops.open_position("SPY", 100.0, 90.0)
+        self.assertFalse(state.breached(90.01))
+        self.assertTrue(state.breached(90.0))
+        self.assertTrue(state.breached(88.0))
+        self.assertFalse(state.breached(0.0), "a missing price is not a breach")
+
+    def test_untracked_position_is_adopted_rather_than_left_naked(self):
+        state = self.stops.update("QQQ", price=50.0, candidate_stop=45.0)
+        self.assertIsNotNone(state)
+        self.assertEqual(state.stop_price, 45.0)
+
+    def test_adopted_position_without_candidate_gets_a_default_stop(self):
+        state = self.stops.update("QQQ", price=50.0, candidate_stop=None)
+        self.assertLess(state.stop_price, 50.0)
+
+    def test_sync_prunes_positions_no_longer_held(self):
+        self.stops.open_position("SPY", 100.0, 90.0)
+        self.stops.open_position("QQQ", 200.0, 180.0)
+        self.stops.sync({"SPY"})
+        self.assertIsNotNone(self.stops.get("SPY"))
+        self.assertIsNone(self.stops.get("QQQ"))
+
+    def test_trail_fraction_is_captured_at_entry(self):
+        state = self.stops.open_position("SPY", entry_price=100.0, stop_price=90.0)
+        self.assertAlmostEqual(state.trail_fraction, 0.10, places=6)
+
+    def test_stop_trails_the_high_water_price(self):
+        self.stops.open_position("SPY", entry_price=100.0, stop_price=90.0)  # 10% trail
+        state = self.stops.update("SPY", price=200.0, candidate_stop=None)
+        self.assertAlmostEqual(state.stop_price, 180.0, places=6)
+
+    def test_trailing_stop_rises_above_entry_locking_in_gains(self):
+        self.stops.open_position("SPY", entry_price=100.0, stop_price=90.0)
+        state = self.stops.update("SPY", price=150.0, candidate_stop=None)
+        self.assertGreater(state.stop_price, 100.0)
+
+    def test_trailing_stop_is_never_placed_at_or_above_current_price(self):
+        self.stops.open_position("SPY", entry_price=100.0, stop_price=99.9)
+        state = self.stops.update("SPY", price=100.0, candidate_stop=None)
+        self.assertLess(state.stop_price, 100.0)
+
+    def test_trail_takes_the_highest_of_the_candidates(self):
+        self.stops.open_position("SPY", entry_price=100.0, stop_price=90.0)
+        # High-water trail implies 108; the strategy's ATR stop implies 95.
+        state = self.stops.update("SPY", price=120.0, candidate_stop=95.0)
+        self.assertAlmostEqual(state.stop_price, 108.0, places=6)
+
+    def test_state_survives_a_new_book_over_the_same_ledger(self):
+        self.stops.open_position("SPY", 100.0, 90.0)
+        self.assertEqual(StopBook(self.ledger).get("SPY").stop_price, 90.0)
+
+
+class TestStopEnforcement(unittest.TestCase):
+    """The behaviour that matters with real money: stops actually fire."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.cfg = temp_cfg(self._tmp.name, universe=["SPY", "QQQ", "IWM", "DIA", "VTI"])
+        self.ledger = Ledger(self.cfg.db_path)
+        self.broker = SimBroker(self.cfg, starting_cash=50.0)
+        self.engine = Engine(self.cfg, broker=self.broker, ledger=self.ledger)
+
+    def tearDown(self):
+        self.ledger.close()
+        self._tmp.cleanup()
+
+    def _open_one(self) -> str:
+        report = self.engine.cycle()
+        opened = [a.symbol for a in report.actions if a.executed and a.intent == "enter"]
+        self.assertTrue(opened, "test needs at least one opened position")
+        return opened[0]
+
+    def test_entry_records_a_stop(self):
+        symbol = self._open_one()
+        state = self.engine.stops.get(symbol)
+        self.assertIsNotNone(state, "an entry must record its stop")
+        self.assertGreater(state.stop_price, 0)
+        self.assertLess(state.stop_price, state.entry_price)
+
+    def test_entry_arms_a_resting_broker_side_stop(self):
+        symbol = self._open_one()
+        resting = self.broker.list_open_orders(symbol)
+        self.assertEqual(len(resting), 1)
+        self.assertTrue(resting[0].is_protective)
+        self.assertAlmostEqual(
+            resting[0].stop_price, self.engine.stops.get(symbol).stop_price, places=6
+        )
+
+    def test_price_below_stop_forces_an_exit(self):
+        symbol = self._open_one()
+        state = self.engine.stops.get(symbol)
+        self.broker.price_overrides[symbol] = state.stop_price * 0.95
+
+        report = self.engine.cycle()
+        exits = [a for a in report.actions if a.intent == "exit" and a.executed]
+        self.assertEqual([a.symbol for a in exits], [symbol])
+        self.assertIn("STOP HIT", exits[0].reason)
+        self.assertEqual(self.broker.get_positions(), [])
+
+    def test_stop_exit_clears_the_stop_book_and_resting_orders(self):
+        symbol = self._open_one()
+        self.broker.price_overrides[symbol] = self.engine.stops.get(symbol).stop_price * 0.9
+        self.engine.cycle()
+        self.assertIsNone(self.engine.stops.get(symbol))
+        self.assertEqual(self.broker.list_open_orders(symbol), [])
+
+    def test_stop_overrides_the_day_trade_guard(self):
+        """A PDT flag is bad; an unstopped loss is worse."""
+        symbol = self._open_one()
+        state = self.engine.stops.get(symbol)
+        self.broker.price_overrides[symbol] = state.stop_price * 0.9
+
+        # Force the day-trade guard to be maximally hostile.
+        original = self.engine.broker.get_account
+
+        def maxed_out():
+            account = original()
+            return Account(
+                account.account_id,
+                account.currency,
+                account.cash,
+                account.equity,
+                account.buying_power,
+                day_trade_count=99,
+            )
+
+        self.engine.broker.get_account = maxed_out
+        report = self.engine.cycle()
+        self.assertTrue(
+            any(a.executed and a.intent == "exit" for a in report.actions),
+            "stop breach must not be blocked by the day-trade guard",
+        )
+
+    def test_ordinary_exit_still_respects_the_day_trade_guard(self):
+        run_id = self.ledger.start_run(
+            mode="t", broker="sim", strategy="trend", equity=50, cash=50
+        )
+        self.ledger.record_order(
+            run_id, broker_order_id="o1", symbol="SPY", side="buy",
+            notional=5.0, qty=None, status="filled", fill_price=1.0,
+        )
+        maxed = Account("A1", "USD", 50, 50, 50, day_trade_count=99)
+        self.assertIsNotNone(self.engine.risk.check_exit("SPY", maxed))
+
+    def test_price_above_stop_does_not_exit(self):
+        symbol = self._open_one()
+        state = self.engine.stops.get(symbol)
+        self.broker.price_overrides[symbol] = state.stop_price * 1.10
+        report = self.engine.cycle()
+        self.assertFalse(
+            any(a.executed and a.intent == "exit" and a.symbol == symbol for a in report.actions)
+        )
+
+    def test_dry_run_arms_nothing_and_sends_nothing(self):
+        report = self.engine.cycle(dry_run=True)
+        self.assertEqual(self.broker.open_orders, [])
+        self.assertEqual(report.protective_stops, [])
+
+    def test_protective_stops_do_not_consume_the_daily_order_budget(self):
+        before = self.ledger.orders_today()
+        self._open_one()
+        # One buy counts; the protective stop that follows must not.
+        self.assertEqual(self.ledger.orders_today(), before + 1)
+
+    def test_repeated_cycles_do_not_pile_up_resting_orders(self):
+        symbol = self._open_one()
+        for _ in range(4):
+            self.engine.cycle()
+        self.assertEqual(
+            len(self.broker.list_open_orders(symbol)), 1,
+            "each cycle must cancel the old stop before arming a new one",
+        )
+
+    def test_stop_trails_up_then_exits_with_a_profit(self):
+        symbol = self._open_one()
+        entry = self.engine.stops.get(symbol).entry_price
+
+        self.broker.price_overrides[symbol] = entry * 1.30
+        self.engine.cycle()
+        trailed = self.engine.stops.get(symbol)
+        self.assertGreater(trailed.stop_price, entry, "stop should be above entry after a 30% run")
+
+        self.broker.price_overrides[symbol] = trailed.stop_price * 0.99
+        report = self.engine.cycle()
+        self.assertTrue(any(a.executed and a.intent == "exit" for a in report.actions))
+        self.assertGreater(
+            self.broker.get_account().equity, 50.0,
+            "a trailing stop that fires above entry must bank a gain",
+        )
+
+    def test_breach_message_reports_the_live_price_not_the_bar_close(self):
+        symbol = self._open_one()
+        state = self.engine.stops.get(symbol)
+        breach_price = state.stop_price * 0.90
+        self.broker.price_overrides[symbol] = breach_price
+        report = self.engine.cycle()
+        exit_action = next(a for a in report.actions if a.executed and a.intent == "exit")
+        self.assertIn(f"{breach_price:.2f}", exit_action.reason)
+
+    def test_stop_is_checked_against_live_price_not_the_stale_close(self):
+        symbol = self._open_one()
+        state = self.engine.stops.get(symbol)
+        # Bars still show the old close; only the live price has collapsed.
+        self.broker.price_overrides[symbol] = state.stop_price * 0.5
+        report = self.engine.cycle()
+        self.assertTrue(
+            any(a.executed and a.intent == "exit" and a.symbol == symbol for a in report.actions)
+        )
 
 
 if __name__ == "__main__":
