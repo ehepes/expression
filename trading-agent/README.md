@@ -42,9 +42,8 @@ most likely outcome is a small loss; the second most likely is a small gain.
 ### What trading crypto instead of ETFs actually changes
 
 - **Volatility is several times higher.** The agent responds by sizing
-  positions *down* — risking a fixed 1.5% of equity to the stop means a wide
-  stop produces a small position. On a €50 balance expect positions around
-  €3–5, not €15. That is the risk model working, not a bug.
+  positions *down*: a wider stop means a smaller position for the same money
+  at risk. On a €50 balance expect entries around €10, not €15.
 - **Markets never close.** There is no overnight gap, but also no close to
   reset at. Run the agent on a schedule; it is not more profitable for
   watching continuously.
@@ -96,10 +95,21 @@ python -m agent preflight
 ```
 
 Preflight checks credentials, balance, market data, and — the constraint that
-actually binds at €50 — each pair's **minimum order size**. Kraken enforces a
-per-pair `ordermin`; if a pair's minimum exceeds your `MAX_ORDER_NOTIONAL`,
-preflight fails that pair rather than letting you discover it from a rejected
-order.
+actually binds at €50 — each pair's **minimum order size** against the size the
+risk engine will really send.
+
+This is the easiest way to end up with an agent that does nothing. Order size
+is roughly:
+
+```
+equity x RISK_PER_TRADE_PCT / MAX_STOP_DISTANCE_PCT
+```
+
+At the defaults (3% risked, 15% stop) a €50 balance orders about **€10**, which
+clears Kraken's EUR minimums. The earlier defaults of 1.5%/25% would have
+ordered €3 — under the ~€5 floor on most EUR pairs, so *every* order would have
+been rejected. Preflight now reports the computed size and fails any pair whose
+minimum exceeds it, with the formula to fix it.
 
 Watch it think without letting it act:
 
@@ -192,8 +202,8 @@ against a freshly fetched account immediately before every order.
 | `MAX_DEPLOYED` | 50 | Total capital the agent may ever have in the market |
 | `MAX_ORDER_NOTIONAL` | 15 | Largest single order |
 | `MIN_ORDER_NOTIONAL` | 2 | Below this, skip rather than place a pointless order |
-| `RISK_PER_TRADE_PCT` | 1.5 | Equity risked per trade, measured to the stop |
-| `MAX_STOP_DISTANCE_PCT` | 25 | Ceiling on how far below entry a stop may sit |
+| `RISK_PER_TRADE_PCT` | 3 | Equity risked per trade, measured to the stop |
+| `MAX_STOP_DISTANCE_PCT` | 15 | Ceiling on how far below entry a stop may sit |
 | `DAILY_LOSS_LIMIT_PCT` | 4 | Stop trading for the day after this loss |
 | `MAX_DRAWDOWN_PCT` | 25 | **Permanent** stop once equity falls this far below peak |
 | `MAX_ORDERS_PER_DAY` | 6 | Hard cap on daily order count |
@@ -243,7 +253,7 @@ agent/
   engine.py       the decision loop; exits processed before entries, always
   backtest.py     next-open fills, costs on both sides
   cli.py          preflight / go-live / run / status / backtest / halt / resume
-tests/            111 tests, no network required
+tests/            113 tests, no network required
 ```
 
 Adding another venue means writing one file against `brokers/base.Broker`. The
@@ -257,7 +267,7 @@ engine, risk layer and stops did not change when Kraken was added.
 python -m unittest discover -s tests -t .
 ```
 
-111 tests, fully offline — the Kraken adapter is tested against a fake HTTP
+113 tests, fully offline — the Kraken adapter is tested against a fake HTTP
 layer that asserts on request signing, nonce ordering, pair-alias resolution,
 volume rounding and minimum-order enforcement.
 
@@ -265,7 +275,8 @@ They also cover: that live mode without the confirmation phrase places no
 orders on either venue; that a cycle never re-buys an open position; that the
 deployment and position caps hold across repeated cycles; that stops ratchet
 up, never loosen, fire on a breach, and bank a gain when they trail above
-entry; and that a stop is never stored negative, zero, or above the price.
+entry; that a stop is never stored negative, zero, or above the price; and
+that the shipped defaults size orders above typical venue minimums.
 
 Run the whole pipeline right now with no credentials:
 

@@ -24,6 +24,7 @@ from .config import LIVE_CONFIRM_PHRASE, Config, ConfigError
 from .engine import Engine
 from .ledger import Ledger
 from .protection import StopBook
+from .risk import RiskEngine
 from .strategy import build as build_strategy
 
 PASS = "  PASS"
@@ -108,6 +109,30 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         failures += 1
 
     strategy = build_strategy(cfg.strategy, cfg.limits.max_stop_distance_pct / 100.0)
+
+    # What a typical entry will actually be sized at, using the same risk
+    # engine the live path uses — so preflight and runtime cannot disagree.
+    sized = 0.0
+    with Ledger(cfg.db_path) as sizing_ledger:
+        probe = RiskEngine(cfg, sizing_ledger).size_entry(
+            symbol="PROBE",
+            price=100.0,
+            stop_price=100.0 * (1 - cfg.limits.max_stop_distance_pct / 100.0),
+            account=account,
+            positions=[],
+        )
+        sized = probe.notional if probe.approved else 0.0
+    if sized > 0:
+        print(
+            f"{PASS}  risk sizing will order about {sized:.2f} {account.currency} per entry "
+            f"({cfg.limits.risk_per_trade_pct:.1f}% of equity risked to a "
+            f"{cfg.limits.max_stop_distance_pct:.0f}% stop)"
+        )
+    else:
+        reason = probe.veto.reason if probe.veto else "unknown"
+        print(f"{FAIL}  risk sizing cannot produce a valid order: {reason}")
+        failures += 1
+
     print(f"  -- market data ({cfg.alpaca_data_feed} feed, need {strategy.warmup} daily bars) --")
     for symbol in cfg.universe:
         try:
@@ -143,7 +168,17 @@ def cmd_preflight(args: argparse.Namespace) -> int:
                 floor = max(ordermin * price, costmin)
                 if floor > 0:
                     note = f"  min order ~{floor:.2f} {account.currency}"
-                    if floor > cfg.limits.max_order_notional:
+                    # Compare against the size the risk engine will ACTUALLY
+                    # send, not the ceiling. Risk-based sizing on a small
+                    # balance routinely lands well below MAX_ORDER_NOTIONAL,
+                    # and an order under the venue minimum is simply rejected.
+                    if sized > 0 and floor > sized:
+                        note += (
+                            f"  -> but risk sizing orders only {sized:.2f}; "
+                            "every order on this pair would be REJECTED"
+                        )
+                        blocked = True
+                    elif floor > cfg.limits.max_order_notional:
                         note += (
                             f"  -> EXCEEDS MAX_ORDER_NOTIONAL "
                             f"({cfg.limits.max_order_notional:.2f}); this pair cannot be traded"
@@ -169,6 +204,13 @@ def cmd_preflight(args: argparse.Namespace) -> int:
     print()
     if failures:
         print(f"VERDICT: NOT READY — {failures} blocking issue(s) above.")
+        if sized > 0:
+            print(
+                "\n  If orders are being sized below a pair's minimum, either raise\n"
+                "  RISK_PER_TRADE_PCT, lower MAX_STOP_DISTANCE_PCT, or choose pairs\n"
+                "  with smaller minimums. Order size is roughly:\n"
+                "      equity x RISK_PER_TRADE_PCT / MAX_STOP_DISTANCE_PCT"
+            )
         return 1
     print("VERDICT: READY. `python -m agent run --dry-run` next; it places no orders.")
     return 0

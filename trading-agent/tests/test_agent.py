@@ -181,12 +181,24 @@ class RiskTestBase(unittest.TestCase):
 
 class TestRiskSizing(RiskTestBase):
     def test_risk_based_size_respects_stop_distance(self):
+        """Size = equity * risk% / stop distance. Pinned explicitly, not to a default."""
+        cfg = temp_cfg(self.tmpdir, limits={"risk_per_trade_pct": 1.5})
+        risk = RiskEngine(cfg, self.ledger)
         # 1.5% of 50 = 0.75 risked; a 10% stop distance implies a 7.50 position.
-        sizing = self.risk.size_entry(
+        sizing = risk.size_entry(
             symbol="SPY", price=100.0, stop_price=90.0, account=self.account, positions=[]
         )
         self.assertTrue(sizing.approved)
         self.assertAlmostEqual(sizing.notional, 7.50, places=2)
+
+    def test_wider_stops_produce_smaller_positions(self):
+        cfg = temp_cfg(self.tmpdir, limits={"risk_per_trade_pct": 1.5})
+        risk = RiskEngine(cfg, self.ledger)
+        tight = risk.size_entry(symbol="SPY", price=100.0, stop_price=95.0,
+                                account=self.account, positions=[])
+        wide = risk.size_entry(symbol="SPY", price=100.0, stop_price=75.0,
+                               account=self.account, positions=[])
+        self.assertGreater(tight.notional, wide.notional)
 
     def test_size_never_exceeds_the_hard_cap(self):
         # A very tight stop implies a huge position; the cap must bind.
@@ -200,6 +212,26 @@ class TestRiskSizing(RiskTestBase):
             symbol="SPY", price=100.0, stop_price=None, account=self.account, positions=[]
         )
         self.assertLessEqual(sizing.notional, self.cfg.limits.max_order_notional)
+
+    def test_default_settings_order_above_typical_venue_minimums(self):
+        """The shipped defaults must produce an order a venue will accept.
+
+        Kraken's EUR pairs bottom out around 5 EUR. Settings that size below
+        that produce orders which are rejected outright, so the defaults are
+        a correctness property, not a preference.
+        """
+        cfg = temp_cfg(self.tmpdir, broker="kraken")
+        risk = RiskEngine(cfg, self.ledger)
+        stop_fraction = cfg.limits.max_stop_distance_pct / 100.0
+        sizing = risk.size_entry(
+            symbol="XBTEUR", price=100.0, stop_price=100.0 * (1 - stop_fraction),
+            account=self.account, positions=[],
+        )
+        self.assertTrue(sizing.approved)
+        self.assertGreaterEqual(
+            sizing.notional, 5.0,
+            f"defaults order {sizing.notional:.2f} on a 50 balance — below Kraken minimums",
+        )
 
     def test_refuses_to_double_up_on_a_held_symbol(self):
         held = [Position("SPY", 0.1, 100.0, 10.0, 0.0)]

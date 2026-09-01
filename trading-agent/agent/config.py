@@ -70,11 +70,15 @@ class Limits:
     max_day_trades: int = 2
     max_positions: int = 2
     # Fraction of equity risked per trade, measured to the stop price.
-    risk_per_trade_pct: float = 1.5
+    # Order size is roughly equity * risk_per_trade_pct / max_stop_distance_pct,
+    # so these two together must clear the venue's minimum order size. At the
+    # defaults a €50 balance orders about €10, which clears Kraken's EUR
+    # minimums; 1.5%/25% would order €3 and be rejected outright.
+    risk_per_trade_pct: float = 3.0
     # Hard ceiling on how far below entry a stop may sit. On a volatile
     # instrument an ATR-derived stop can exceed the price itself, which
     # silently leaves the position unprotected; this floors it.
-    max_stop_distance_pct: float = 25.0
+    max_stop_distance_pct: float = 15.0
 
     def validate(self) -> None:
         if self.min_order_notional < 1.0:
@@ -167,8 +171,8 @@ def load(dotenv_path: str | Path = ".env") -> Config:
         max_orders_per_day=_int("MAX_ORDERS_PER_DAY", 6),
         max_day_trades=_int("MAX_DAY_TRADES", 2),
         max_positions=_int("MAX_POSITIONS", 2),
-        risk_per_trade_pct=_float("RISK_PER_TRADE_PCT", 1.5),
-        max_stop_distance_pct=_float("MAX_STOP_DISTANCE_PCT", 25.0),
+        risk_per_trade_pct=_float("RISK_PER_TRADE_PCT", 3.0),
+        max_stop_distance_pct=_float("MAX_STOP_DISTANCE_PCT", 15.0),
     )
     limits.validate()
 
