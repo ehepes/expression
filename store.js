@@ -799,13 +799,10 @@ window.Store = (() => {
 
   // Admin-only in practice (RLS blocks others): list everyone and set roles.
   async function listProfiles() {
-    if (!sb) return [];
+    if (!sb) return { data: [], error: null };
     const { data, error } = await sb.from("profiles").select("*").order("email");
-    if (error) {
-      console.error("Could not list people:", error);
-      return [];
-    }
-    return data || [];
+    if (error) console.error("Could not list people:", error);
+    return { data: data || [], error };
   }
 
   async function setRole(id, role) {

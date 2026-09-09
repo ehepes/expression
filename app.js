@@ -1,6 +1,6 @@
 /* EXPRESSION — media team hub. UI layer. */
 
-const APP_VERSION = "v20"; // shown in Settings so we can confirm a device updated
+const APP_VERSION = "v21"; // shown in Settings so we can confirm a device updated
 
 const ACCOUNTS = {
   main: "Main Church",
@@ -1101,10 +1101,19 @@ function renderNotifyList() {
 async function populatePeopleList() {
   const box = document.getElementById("people-list");
   if (!box) return;
-  const people = await Store.listProfiles();
+  const { data: people, error } = await Store.listProfiles();
   const meId = Store.getUser() && Store.getUser().id;
+  const toolbar = `<div class="people-toolbar">
+      <span>${people.length} ${people.length === 1 ? "person" : "people"}</span>
+      <button type="button" class="ghost-btn small" data-action="refresh-people">Refresh</button>
+    </div>`;
+  if (error) {
+    box.innerHTML =
+      toolbar + `<p class="hint">Couldn’t load the list: ${esc(error.message || String(error))}. Tap Refresh.</p>`;
+    return;
+  }
   if (!people.length) {
-    box.innerHTML = '<p class="hint">No one has signed in yet.</p>';
+    box.innerHTML = toolbar + '<p class="hint">No one has signed in yet.</p>';
     return;
   }
   const ROLE_NAMES = { requester: "Requester", editor: "Editor", admin: "Admin" };
@@ -1112,7 +1121,9 @@ async function populatePeopleList() {
     Object.entries(ROLE_NAMES)
       .map(([k, name]) => `<option value="${k}" ${role === k ? "selected" : ""}>${name}</option>`)
       .join("");
-  box.innerHTML = people
+  box.innerHTML =
+    toolbar +
+    people
     .map((p) => {
       const self = p.id === meId;
       // Your own row shows a static badge — you can't change your own role
@@ -1750,6 +1761,9 @@ document.addEventListener("click", (e) => {
       authMode = authMode === "signup" ? "signin" : "signup";
       authError = "";
       paint();
+      break;
+    case "refresh-people":
+      populatePeopleList();
       break;
     case "sign-out":
       if (confirm("Sign out of this device?")) {
