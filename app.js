@@ -1218,7 +1218,12 @@ function morningReminder() {
 }
 
 document.addEventListener("visibilitychange", () => {
-  if (document.visibilityState === "visible") morningReminder();
+  if (document.visibilityState === "visible") {
+    morningReminder();
+    // Re-check the session/role each time the app comes back into view, so a
+    // promotion (or sign-out elsewhere) takes effect without a full reload.
+    Store.refresh();
+  }
 });
 
 // ----- quick links -----

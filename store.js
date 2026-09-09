@@ -218,6 +218,7 @@ window.Store = (() => {
     sb.channel("db-changes")
       .on("postgres_changes", { event: "*", schema: "public" }, async () => {
         try {
+          await refreshProfile(); // pick up a role change made by an admin
           await fetchAll();
           emit();
         } catch (e) {
@@ -225,6 +226,16 @@ window.Store = (() => {
         }
       })
       .subscribe();
+  }
+
+  // Reload the signed-in person's profile; if their role changed (e.g. an admin
+  // promoted them), tell the app so it can swap them into the right view live.
+  async function refreshProfile() {
+    if (!user) return;
+    const before = profile ? profile.role : null;
+    await loadProfile();
+    const after = profile ? profile.role : null;
+    if (before !== after) emitAuth();
   }
 
   // Load the signed-in person's profile (which carries their role). If the
@@ -815,6 +826,16 @@ window.Store = (() => {
     getUser: () => user,
     getProfile: () => profile,
     getRole: () => (profile ? profile.role : null),
+    refresh: async () => {
+      if (!sb || !user) return;
+      try {
+        await refreshProfile();
+        await fetchAll();
+        emit();
+      } catch (e) {
+        console.error("Refresh failed:", e);
+      }
+    },
     isAuthReady: () => authReady,
     isAuthMode: () => mode === "remote",
     isStaff,
