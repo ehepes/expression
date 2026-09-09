@@ -1,6 +1,6 @@
 /* EXPRESSION — media team hub. UI layer. */
 
-const APP_VERSION = "v21"; // shown in Settings so we can confirm a device updated
+const APP_VERSION = "v22"; // shown in Settings so we can confirm a device updated
 
 const ACCOUNTS = {
   main: "Main Church",

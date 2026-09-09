@@ -1014,9 +1014,13 @@ body[data-access="request-only"] #banner {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.person-role {
+/* Scoped with .person-row so it beats the global ".field select { width:100% }"
+   rule — otherwise the dropdown goes full width and crushes the name to zero. */
+.person-row .person-role {
   flex: 0 0 auto;
-  min-width: 108px;
+  width: auto;
+  min-width: 116px;
+  max-width: 150px;
   min-height: 38px;
   border: 1px solid var(--line);
   border-radius: 8px;
