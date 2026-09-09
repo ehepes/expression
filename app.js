@@ -1104,26 +1104,26 @@ async function populatePeopleList() {
     box.innerHTML = '<p class="hint">No one has signed in yet.</p>';
     return;
   }
+  const ROLE_NAMES = { requester: "Requester", editor: "Editor", admin: "Admin" };
   const roleOpts = (role) =>
-    [
-      ["requester", "Requester"],
-      ["editor", "Editor"],
-      ["admin", "Admin"],
-    ]
+    Object.entries(ROLE_NAMES)
       .map(([k, name]) => `<option value="${k}" ${role === k ? "selected" : ""}>${name}</option>`)
       .join("");
   box.innerHTML = people
     .map((p) => {
       const self = p.id === meId;
+      // Your own row shows a static badge — you can't change your own role
+      // (stops an admin locking themselves out).
+      const control = self
+        ? `<span class="person-self">${ROLE_NAMES[p.role] || p.role} · you</span>`
+        : `<select class="person-role" data-role-for="${p.id}">${roleOpts(p.role)}</select>`;
       return `
       <div class="person-row">
         <div class="person-id">
           <span class="person-name">${esc(p.name || p.email)}</span>
           ${p.name ? `<span class="person-email">${esc(p.email)}</span>` : ""}
         </div>
-        <select class="person-role" data-role-for="${p.id}" ${self ? "disabled title='You can’t change your own role'" : ""}>
-          ${roleOpts(p.role)}
-        </select>
+        ${control}
       </div>`;
     })
     .join("");
