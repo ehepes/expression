@@ -11,6 +11,8 @@ create table if not exists members (
   name text not null unique,
   created_at timestamptz not null default now()
 );
+-- Which members get a notification when a new request is submitted.
+alter table members add column if not exists notify_requests boolean not null default false;
 
 -- Who is on posting duty for a given week (Monday date), per account.
 create table if not exists week_assignments (

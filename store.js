@@ -449,6 +449,21 @@ window.Store = (() => {
     emit();
   }
 
+  // Toggle whether a team member is pushed a notification on new requests.
+  async function setMemberNotify(id, on) {
+    if (sb) {
+      const { error } = await sb.from("members").update({ notify_requests: !!on }).eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    const m = state.members.find((x) => x.id === id);
+    if (m) {
+      m.notify_requests = !!on;
+      saveLocal();
+      emit();
+    }
+  }
+
   // ----- week assignments (posting duty for a whole week) -----
   async function setWeekAssignment(acct, weekStartStr, assignee) {
     assignee = (assignee || "").trim();
@@ -553,11 +568,29 @@ window.Store = (() => {
     };
   }
 
+  // Ask the Edge Function to push everyone flagged to receive new requests.
+  // Recipients are resolved server-side, so even a requester (who can't read
+  // the team list) can trigger the alert. Fire-and-forget.
+  function notifyNewRequest(r) {
+    if (!sb) return;
+    sb.functions
+      .invoke("NOTIFY", {
+        body: {
+          mode: "request",
+          title: r.title,
+          account: r.account || "main",
+          requested_by: r.requested_by || "",
+        },
+      })
+      .catch((e) => console.error("request notify failed:", e));
+  }
+
   async function addRequest(fields) {
     const r = requestRow(Object.assign({ id: uid() }, fields));
     if (sb) {
       const { error } = await sb.from("requests").insert(r);
       if (error) return remoteFail(error);
+      notifyNewRequest(r);
       return afterRemoteWrite();
     }
     state.requests.push(r);
@@ -704,6 +737,7 @@ window.Store = (() => {
     updateProject,
     deleteProject,
     addMember,
+    setMemberNotify,
     setWeekAssignment,
     isException,
     addException,

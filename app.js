@@ -439,14 +439,30 @@ function openWeekAssignModal() {
   });
 }
 
+// Which project status groups are expanded, remembered per device. Default is
+// collapsed, so the tab is a short list of headings you drop down into.
+function projectOpen() {
+  const p = getPrefs().projectOpen;
+  return p && typeof p === "object" ? p : {};
+}
+
 function renderProjects() {
   const projects = accountProjects();
+  const open = projectOpen();
   let sections = "";
   PROJECT_STATUSES.forEach(([key, label]) => {
     const group = projects.filter((r) => (r.status || "idea") === key);
     if (!group.length) return;
-    sections += `<div class="section-title">${label} · ${group.length}</div>`;
-    sections += group.map(projectCardHtml).join("");
+    const isOpen = !!open[key];
+    sections += `
+      <button type="button" class="group-head${isOpen ? " open" : ""}" data-action="toggle-group" data-group="${key}" aria-expanded="${isOpen}">
+        <span class="group-caret">&#9656;</span>
+        <span class="group-label">${label}</span>
+        <span class="group-count">${group.length}</span>
+      </button>`;
+    if (isOpen) {
+      sections += `<div class="group-body">${group.map(projectCardHtml).join("")}</div>`;
+    }
   });
   if (!sections) {
     sections =
@@ -1012,6 +1028,11 @@ function openSettingsModal() {
                  <label>People &amp; access</label>
                  <p class="hint">Set what each person can do. <b>Requester</b> can only send requests; <b>Editor</b> gets the full app; <b>Admin</b> can also manage people here.</p>
                  <div id="people-list" class="people-list"><p class="hint">Loading people…</p></div>
+               </div>
+               <div class="field">
+                 <label>Notify on new requests</label>
+                 <p class="hint">Choose who gets a notification when a new request comes in. (They also need notifications allowed on their device.)</p>
+                 ${renderNotifyList()}
                </div>`
             : ""
         }
@@ -1047,6 +1068,28 @@ function openSettingsModal() {
     closeModal();
   });
   if (isAdmin) populatePeopleList();
+}
+
+// Admin-only: pick which team members are pushed a "new request" alert.
+// Recipients are team names (set in Settings); the toggle stores the choice.
+function renderNotifyList() {
+  const members = (Store.get().members || []).slice().sort((a, b) =>
+    (a.name || "").localeCompare(b.name || "")
+  );
+  if (!members.length) {
+    return '<p class="hint">No team names yet. People appear here once they set their name in Settings.</p>';
+  }
+  return `<div class="notify-list">${members
+    .map(
+      (m) => `
+      <label class="notify-row">
+        <span class="notify-name">${esc(m.name)}</span>
+        <input type="checkbox" class="notify-toggle" data-notify-for="${m.id}" ${
+        m.notify_requests ? "checked" : ""
+      } />
+      </label>`
+    )
+    .join("")}</div>`;
 }
 
 // Admin-only: list everyone who has signed in, with a role dropdown each.
@@ -1401,6 +1444,14 @@ document.addEventListener("click", (e) => {
     case "add-project":
       openProjectModal();
       break;
+    case "toggle-group": {
+      const g = el.dataset.group;
+      const open = Object.assign({}, projectOpen());
+      open[g] = !open[g];
+      setPrefs({ projectOpen: open });
+      render();
+      break;
+    }
     case "edit-project":
       if (e.target.closest('[data-action="advance-project"]')) break;
       openProjectModal(el.dataset.id);
@@ -1534,6 +1585,8 @@ document.addEventListener("change", (e) => {
         populatePeopleList();
       }
     });
+  } else if (e.target.classList && e.target.classList.contains("notify-toggle")) {
+    Store.setMemberNotify(e.target.dataset.notifyFor, e.target.checked);
   }
 });
 

@@ -49,6 +49,7 @@ create table if not exists projects (
 create table if not exists members (
   id uuid primary key default gen_random_uuid(),
   name text not null unique,
+  notify_requests boolean not null default false, -- alert this person on new requests
   created_at timestamptz not null default now()
 );
 

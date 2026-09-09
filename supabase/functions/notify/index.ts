@@ -107,6 +107,35 @@ async function sendMorningReminders(): Promise<number> {
   return sent;
 }
 
+// Alert the chosen people (members with notify_requests = true) that a new
+// request has come in. Recipients are looked up here (server-side) so the
+// person sending the request never needs read access to the team list.
+async function sendRequestAlerts(
+  title: string,
+  account: string,
+  requestedBy: string,
+): Promise<number> {
+  const { data: recipients, error } = await supabase
+    .from("members")
+    .select("name")
+    .eq("notify_requests", true);
+  if (error) throw error;
+
+  const acct = ACCOUNTS[account ?? "main"] ?? account ?? "Main Church";
+  const who = requestedBy ? ` from ${requestedBy}` : "";
+  let sent = 0;
+  for (const r of recipients ?? []) {
+    const name = String(r.name ?? "").trim().toLowerCase();
+    if (!name) continue;
+    sent += await sendToName(name, {
+      title: "New request received",
+      body: `${title} · ${acct}${who}`,
+      url: "./",
+    });
+  }
+  return sent;
+}
+
 // Remind assignees of any project due tomorrow (the day-before deadline nudge).
 async function sendDeadlineReminders(): Promise<number> {
   const now = new Date();
@@ -145,6 +174,17 @@ Deno.serve(async (req) => {
       const dutySent = await sendMorningReminders();
       const deadlineSent = await sendDeadlineReminders();
       return json({ ok: true, mode: "morning", dutySent, deadlineSent });
+    }
+
+    // A new request came in — alert the people chosen to receive them.
+    if (payload.mode === "request") {
+      if (!payload.title) return json({ error: "title is required" }, 400);
+      const sent = await sendRequestAlerts(
+        String(payload.title),
+        String(payload.account ?? "main"),
+        String(payload.requested_by ?? ""),
+      );
+      return json({ ok: true, mode: "request", sent });
     }
 
     // Default — notify a single assigned person.
