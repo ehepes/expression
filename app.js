@@ -1894,10 +1894,10 @@ function wireAuthForm() {
       if (res.error) {
         authError = friendlyAuthError(res.error, signup);
       } else if (signup && res.data && !res.data.session) {
-        // No session back on sign-up = email confirmation is still on.
+        // No session returned on sign-up — the account is already usable
+        // (auto-confirmed), so just sign in with the same details.
         authMode = "signin";
-        authError =
-          "Account created. If you can’t sign in yet, ask the admin to turn off email confirmation in Supabase.";
+        authError = "Account created! Now sign in below with the same email and password.";
       }
       // On success a session arrives via onAuthStateChange, which repaints
       // into the app automatically.
