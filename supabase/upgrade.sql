@@ -58,22 +58,48 @@ alter table requests add column if not exists due_date date;
 -- Asset/Drive link per calendar item.
 alter table items add column if not exists asset_url text not null default '';
 
+-- Focus planning (weekly theme + content to shoot ahead).
+create table if not exists focus_weeks (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  week_start date not null,
+  title text not null default '',
+  created_at timestamptz not null default now(),
+  unique (account, week_start)
+);
+create table if not exists focus_ideas (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  week_start date not null,
+  type text not null default 'reel' check (type in ('reel','post','carousel')),
+  description text not null default '',
+  concept_url text not null default '',
+  shot boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
 alter table members enable row level security;
 alter table week_assignments enable row level security;
 alter table item_exceptions enable row level security;
 alter table links enable row level security;
 alter table requests enable row level security;
+alter table focus_weeks enable row level security;
+alter table focus_ideas enable row level security;
 
 drop policy if exists "team access" on members;
 drop policy if exists "team access" on week_assignments;
 drop policy if exists "team access" on item_exceptions;
 drop policy if exists "team access" on links;
 drop policy if exists "team access" on requests;
+drop policy if exists "team access" on focus_weeks;
+drop policy if exists "team access" on focus_ideas;
 create policy "team access" on members for all using (true) with check (true);
 create policy "team access" on week_assignments for all using (true) with check (true);
 create policy "team access" on item_exceptions for all using (true) with check (true);
 create policy "team access" on links for all using (true) with check (true);
 create policy "team access" on requests for all using (true) with check (true);
+create policy "team access" on focus_weeks for all using (true) with check (true);
+create policy "team access" on focus_ideas for all using (true) with check (true);
 
 -- Realtime (each guarded so re-running doesn't error).
 do $$ begin alter publication supabase_realtime add table members; exception when duplicate_object then null; end $$;
@@ -81,3 +107,5 @@ do $$ begin alter publication supabase_realtime add table week_assignments; exce
 do $$ begin alter publication supabase_realtime add table item_exceptions; exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table links; exception when duplicate_object then null; end $$;
 do $$ begin alter publication supabase_realtime add table requests; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table focus_weeks; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table focus_ideas; exception when duplicate_object then null; end $$;

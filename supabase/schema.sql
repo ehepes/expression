@@ -138,6 +138,35 @@ alter publication supabase_realtime add table links;
 alter publication supabase_realtime add table requests;
 
 -- ---------------------------------------------------------------
+-- Focus planning: a weekly theme + content ideas to shoot ahead of the week
+-- they post (week_start = Monday of the POSTING week).
+-- ---------------------------------------------------------------
+create table if not exists focus_weeks (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  week_start date not null,
+  title text not null default '',
+  created_at timestamptz not null default now(),
+  unique (account, week_start)
+);
+create table if not exists focus_ideas (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  week_start date not null,
+  type text not null default 'reel' check (type in ('reel','post','carousel')),
+  description text not null default '',
+  concept_url text not null default '',
+  shot boolean not null default false,
+  created_at timestamptz not null default now()
+);
+alter table focus_weeks enable row level security;
+alter table focus_ideas enable row level security;
+create policy "team access" on focus_weeks for all using (true) with check (true);
+create policy "team access" on focus_ideas for all using (true) with check (true);
+alter publication supabase_realtime add table focus_weeks;
+alter publication supabase_realtime add table focus_ideas;
+
+-- ---------------------------------------------------------------
 -- Accounts & roles foundation.
 --
 -- With the "team access" policies above, the app is open to anyone with the

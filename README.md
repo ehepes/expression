@@ -24,6 +24,12 @@ It covers the three branches of the team:
     your Sunday shoot list. Add or remove tasks any time.
   - **Graphics** — a weekly checklist like Media/Editing; bigger pieces can
     also be tracked as Projects.
+- **Focus** — plan the month ahead. For each upcoming week set a **focus
+  title** (the theme) and add **content ideas** (Reel / Post / Carousel, a
+  description and an optional concept link). Because you plan future weeks,
+  each idea is content to **shoot in advance** — tick **To shoot → Shot** as
+  it's filmed, and a banner flags what still needs shooting for the next
+  couple of weeks. Editable by editors/admins; hidden from request-only users.
 - **Projects pipeline** — capture ideas, assign them to people, set a
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices

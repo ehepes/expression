@@ -35,6 +35,8 @@ window.Store = (() => {
     item_exceptions: [],
     links: [],
     requests: [],
+    focus_weeks: [],
+    focus_ideas: [],
   };
 
   let mode = "local"; // "local" | "remote" | "local-error"
@@ -158,24 +160,43 @@ window.Store = (() => {
 
   // ----- remote (Supabase) -----
   async function fetchAll() {
-    const [items, completions, projects, members, weekAssignments, exceptions, links, requests] =
-      await Promise.all([
-        sb.from("items").select("*").order("created_at"),
-        sb.from("completions").select("*"),
-        sb.from("projects").select("*").order("created_at"),
-        sb.from("members").select("*").order("name"),
-        sb.from("week_assignments").select("*"),
-        sb.from("item_exceptions").select("*"),
-        sb.from("links").select("*").order("sort").order("created_at"),
-        sb.from("requests").select("*").order("created_at"),
-      ]);
+    const [
+      items,
+      completions,
+      projects,
+      members,
+      weekAssignments,
+      exceptions,
+      links,
+      requests,
+      focusWeeks,
+      focusIdeas,
+    ] = await Promise.all([
+      sb.from("items").select("*").order("created_at"),
+      sb.from("completions").select("*"),
+      sb.from("projects").select("*").order("created_at"),
+      sb.from("members").select("*").order("name"),
+      sb.from("week_assignments").select("*"),
+      sb.from("item_exceptions").select("*"),
+      sb.from("links").select("*").order("sort").order("created_at"),
+      sb.from("requests").select("*").order("created_at"),
+      sb.from("focus_weeks").select("*"),
+      sb.from("focus_ideas").select("*").order("created_at"),
+    ]);
     // Never throw: a per-table error can mean "not allowed" (a requester
     // has no access to staff tables) or a transient network blip. In both
     // cases we keep the last known rows for that table instead of wiping
     // the screen. Staff-table errors only flag an upgrade for staff users.
     upgradeNeeded =
       isStaff() &&
-      !!(members.error || weekAssignments.error || exceptions.error || links.error);
+      !!(
+        members.error ||
+        weekAssignments.error ||
+        exceptions.error ||
+        links.error ||
+        focusWeeks.error ||
+        focusIdeas.error
+      );
     const keep = (res, prev) => (res.error ? prev : res.data || []);
     state = {
       items: keep(items, state.items),
@@ -186,6 +207,8 @@ window.Store = (() => {
       item_exceptions: keep(exceptions, state.item_exceptions),
       links: keep(links, state.links),
       requests: keep(requests, state.requests),
+      focus_weeks: keep(focusWeeks, state.focus_weeks),
+      focus_ideas: keep(focusIdeas, state.focus_ideas),
     };
   }
 
@@ -623,6 +646,76 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- focus (weekly theme + content ideas to shoot ahead) -----
+  async function setFocusTitle(acct, weekStartStr, title) {
+    title = (title || "").trim();
+    if (sb) {
+      const { error } = await sb
+        .from("focus_weeks")
+        .upsert({ account: acct, week_start: weekStartStr, title }, { onConflict: "account,week_start" });
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    const row = state.focus_weeks.find(
+      (w) => (w.account || "main") === acct && w.week_start === weekStartStr
+    );
+    if (row) row.title = title;
+    else state.focus_weeks.push({ id: uid(), account: acct, week_start: weekStartStr, title });
+    saveLocal();
+    emit();
+  }
+
+  function focusIdeaRow(r) {
+    let concept_url = (r.concept_url || "").trim();
+    if (concept_url && !/^https?:\/\//i.test(concept_url)) concept_url = "https://" + concept_url;
+    return {
+      id: r.id,
+      account: r.account || "main",
+      week_start: r.week_start,
+      type: ["reel", "post", "carousel"].includes(r.type) ? r.type : "reel",
+      description: (r.description || "").trim(),
+      concept_url,
+      shot: !!r.shot,
+    };
+  }
+
+  async function addFocusIdea(fields) {
+    const r = focusIdeaRow(Object.assign({ id: uid() }, fields));
+    if (sb) {
+      const { error } = await sb.from("focus_ideas").insert(r);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.focus_ideas.push(r);
+    saveLocal();
+    emit();
+  }
+
+  async function updateFocusIdea(id, fields) {
+    const current = state.focus_ideas.find((r) => r.id === id);
+    if (!current) return;
+    const next = focusIdeaRow(Object.assign({}, current, fields, { id }));
+    if (sb) {
+      const { error } = await sb.from("focus_ideas").update(next).eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    Object.assign(current, next);
+    saveLocal();
+    emit();
+  }
+
+  async function deleteFocusIdea(id) {
+    if (sb) {
+      const { error } = await sb.from("focus_ideas").delete().eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.focus_ideas = state.focus_ideas.filter((r) => r.id !== id);
+    saveLocal();
+    emit();
+  }
+
   // ----- web push (closed-app notifications) -----
   function urlBase64ToUint8Array(base64String) {
     const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
@@ -747,6 +840,10 @@ window.Store = (() => {
     addRequest,
     updateRequest,
     deleteRequest,
+    setFocusTitle,
+    addFocusIdea,
+    updateFocusIdea,
+    deleteFocusIdea,
     enablePush,
   };
 })();

@@ -56,9 +56,10 @@ function setPrefs(patch) {
 }
 
 // ----- app state -----
-let tab = ["today", "week", "projects", "requests"].includes(location.hash.slice(1))
+let tab = ["today", "week", "focus", "projects", "requests"].includes(location.hash.slice(1))
   ? location.hash.slice(1)
   : "today";
+let focusWeeksShown = 5; // Focus tab horizon: this week + next 4 (extendable)
 let branchFilter = "social"; // which team is selected on the Week tab
 let weekStart = startOfWeek(new Date());
 let account = ACCOUNTS[getPrefs().account] ? getPrefs().account : "main";
@@ -170,6 +171,7 @@ function render() {
   renderRequestsBadge();
   const view = document.getElementById("view");
   if (tab === "week") view.innerHTML = renderWeek();
+  else if (tab === "focus") view.innerHTML = renderFocus();
   else if (tab === "projects") view.innerHTML = renderProjects();
   else if (tab === "requests") view.innerHTML = renderRequests();
   else view.innerHTML = renderToday();
@@ -1285,6 +1287,178 @@ function openLinkModal(id) {
   form.label.focus();
 }
 
+// ----- focus (weekly theme + content to shoot ahead) -----
+const FOCUS_TYPES = [
+  ["reel", "Reel", "#FFE9EF;color:#D03A6B"],
+  ["post", "Post", "#EAF1FF;color:#1E5BD6"],
+  ["carousel", "Carousel", "#E8E2FB;color:#6D3FE0"],
+];
+
+function accountFocusWeeks() {
+  return Store.get().focus_weeks.filter((w) => (w.account || "main") === account);
+}
+function accountFocusIdeas() {
+  return Store.get().focus_ideas.filter((r) => (r.account || "main") === account);
+}
+function focusTitleFor(wsStr) {
+  const w = accountFocusWeeks().find((x) => x.week_start === wsStr);
+  return w ? w.title || "" : "";
+}
+
+function renderFocus() {
+  const start = startOfWeek(new Date());
+  const startStr = ymd(start);
+  // Shoot-ahead nudge: unshot ideas landing in the next two weeks.
+  const soonEnd = ymd(addDays(start, 14));
+  const toShootSoon = accountFocusIdeas().filter(
+    (r) => !r.shot && r.week_start >= startStr && r.week_start < soonEnd
+  ).length;
+  const banner = toShootSoon
+    ? `<div class="focus-alert">&#127909; ${toShootSoon} item${
+        toShootSoon === 1 ? "" : "s"
+      } still to shoot for the next 2 weeks</div>`
+    : "";
+  let cards = "";
+  for (let i = 0; i < focusWeeksShown; i++) cards += focusWeekCardHtml(addDays(start, i * 7));
+  return `
+    <div class="projects-head">
+      <h2>Focus</h2>
+    </div>
+    <p class="focus-intro">Plan the month ahead — set each week's focus and add content that needs shooting <b>before</b> the week it posts.</p>
+    ${banner}
+    ${cards}
+    <button class="ghost-btn focus-more" data-action="focus-more">Show more weeks</button>`;
+}
+
+function focusWeekCardHtml(ws) {
+  const wsStr = ymd(ws);
+  const range = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}`;
+  const isThisWeek = wsStr === ymd(startOfWeek(new Date()));
+  const ideas = accountFocusIdeas().filter((r) => r.week_start === wsStr);
+  const ideaRows = ideas.length
+    ? ideas.map(focusIdeaRowHtml).join("")
+    : '<div class="focus-empty">Nothing planned yet.</div>';
+  return `
+    <div class="focus-card">
+      <div class="focus-week-range">${range}${
+        isThisWeek ? ' <span class="focus-now">this week</span>' : ""
+      }</div>
+      <input class="focus-title-input" data-focus-week="${wsStr}" value="${esc(
+    focusTitleFor(wsStr)
+  )}" maxlength="120" placeholder="Focus for this week (e.g. Baptism Sunday)…" />
+      ${ideaRows}
+      <button class="ghost-btn small focus-add" data-action="add-focus" data-week="${wsStr}">+ Add content</button>
+    </div>`;
+}
+
+function focusIdeaRowHtml(r) {
+  const t = FOCUS_TYPES.find((x) => x[0] === r.type) || FOCUS_TYPES[0];
+  return `
+    <div class="focus-idea${r.shot ? " shot" : ""}">
+      <div class="focus-idea-main" data-action="edit-focus" data-id="${r.id}">
+        <div class="focus-idea-top">
+          <span class="status-chip" style="background:${t[2]}">${t[1]}</span>
+          ${
+            r.concept_url
+              ? `<a class="focus-link" href="${esc(
+                  r.concept_url
+                )}" target="_blank" rel="noopener">&#128279; concept</a>`
+              : ""
+          }
+        </div>
+        ${
+          r.description
+            ? `<div class="focus-idea-desc">${esc(r.description)}</div>`
+            : '<div class="focus-idea-desc muted">No description</div>'
+        }
+      </div>
+      <label class="focus-shot-toggle" title="Tick once it's been filmed">
+        <input type="checkbox" class="focus-shot" data-id="${r.id}" ${r.shot ? "checked" : ""} />
+        <span>${r.shot ? "Shot" : "To shoot"}</span>
+      </label>
+    </div>`;
+}
+
+function openFocusIdeaModal(weekStr, id) {
+  const editing = id ? accountFocusIdeas().find((r) => r.id === id) : null;
+  const r = editing || { type: "reel", description: "", concept_url: "", week_start: weekStr, shot: false };
+  const start = startOfWeek(new Date());
+  const opts = [];
+  const seen = new Set();
+  // If editing an idea parked on an earlier week, keep that option available.
+  if (r.week_start && r.week_start < ymd(start)) {
+    opts.push(`<option value="${r.week_start}" selected>${esc(r.week_start)} (earlier week)</option>`);
+    seen.add(r.week_start);
+  }
+  for (let i = 0; i < Math.max(focusWeeksShown, 8); i++) {
+    const ws = ymd(addDays(start, i * 7));
+    if (seen.has(ws)) continue;
+    opts.push(
+      `<option value="${ws}" ${r.week_start === ws ? "selected" : ""}>${fmtShort(
+        addDays(start, i * 7)
+      )} – ${fmtShort(addDays(start, i * 7 + 6))}</option>`
+    );
+  }
+  const typeOpts = FOCUS_TYPES.map(
+    ([k, name]) => `<option value="${k}" ${r.type === k ? "selected" : ""}>${name}</option>`
+  ).join("");
+  document.getElementById("modal-root").innerHTML = `
+    <div class="modal-overlay" data-action="close-modal">
+      <form class="modal" id="focus-form">
+        <h2>${editing ? "Edit content" : "Add content"}</h2>
+        <div class="field">
+          <label>Type</label>
+          <select name="type">${typeOpts}</select>
+        </div>
+        <div class="field">
+          <label>Post week</label>
+          <select name="week_start">${opts.join("")}</select>
+          <p class="hint">The week it should go live. Shoot it before then.</p>
+        </div>
+        <div class="field">
+          <label>Description</label>
+          <textarea name="description" maxlength="2000" placeholder="What's the idea? Shot list, message, who's in it…">${esc(
+            r.description
+          )}</textarea>
+        </div>
+        <div class="field">
+          <label>Concept link</label>
+          <input type="text" name="concept_url" maxlength="500" value="${esc(
+            r.concept_url
+          )}" placeholder="Canva, reference reel, Drive… (optional)" />
+        </div>
+        <label class="check-label">
+          <input type="checkbox" name="shot" ${r.shot ? "checked" : ""} />
+          <span>Already shot</span>
+        </label>
+        <div class="modal-actions">
+          ${
+            editing
+              ? `<button type="button" class="danger-btn" data-action="delete-focus" data-id="${editing.id}">Delete</button>`
+              : '<button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>'
+          }
+          <button type="submit" class="primary-btn">${editing ? "Save" : "Add"}</button>
+        </div>
+      </form>
+    </div>`;
+  const form = document.getElementById("focus-form");
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    const fields = {
+      account,
+      week_start: form.week_start.value,
+      type: form.type.value,
+      description: form.description.value.trim(),
+      concept_url: form.concept_url.value.trim(),
+      shot: form.shot.checked,
+    };
+    if (editing) Store.updateFocusIdea(editing.id, fields);
+    else Store.addFocusIdea(fields);
+    closeModal();
+  });
+  form.description.focus();
+}
+
 // ----- requests -----
 // The tab only shows requests still awaiting approval. Approving one moves it
 // into Projects; declining removes it. So the tab stays clean.
@@ -1510,6 +1684,23 @@ document.addEventListener("click", (e) => {
         openLinksModal();
       }
       break;
+    case "add-focus":
+      openFocusIdeaModal(el.dataset.week);
+      break;
+    case "edit-focus":
+      if (e.target.closest("a")) break; // let the concept link open normally
+      openFocusIdeaModal(null, el.dataset.id);
+      break;
+    case "focus-more":
+      focusWeeksShown += 4;
+      render();
+      break;
+    case "delete-focus":
+      if (confirm("Delete this content idea?")) {
+        Store.deleteFocusIdea(el.dataset.id);
+        closeModal();
+      }
+      break;
     case "add-request":
       openRequestModal();
       break;
@@ -1587,6 +1778,10 @@ document.addEventListener("change", (e) => {
     });
   } else if (e.target.classList && e.target.classList.contains("notify-toggle")) {
     Store.setMemberNotify(e.target.dataset.notifyFor, e.target.checked);
+  } else if (e.target.classList && e.target.classList.contains("focus-title-input")) {
+    Store.setFocusTitle(account, e.target.dataset.focusWeek, e.target.value);
+  } else if (e.target.classList && e.target.classList.contains("focus-shot")) {
+    Store.updateFocusIdea(e.target.dataset.id, { shot: e.target.checked });
   }
 });
 

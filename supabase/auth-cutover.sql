@@ -29,7 +29,8 @@ declare t text;
 begin
   foreach t in array array[
     'items','completions','projects','members',
-    'week_assignments','item_exceptions','links'
+    'week_assignments','item_exceptions','links',
+    'focus_weeks','focus_ideas'
   ] loop
     execute format('drop policy if exists "team access" on public.%I', t);
     execute format('drop policy if exists "staff all" on public.%I', t);
@@ -68,7 +69,8 @@ create policy "authed push" on public.push_subscriptions for all
 -- begin
 --   foreach t in array array[
 --     'items','completions','projects','members','week_assignments',
---     'item_exceptions','links','requests','push_subscriptions'
+--     'item_exceptions','links','focus_weeks','focus_ideas',
+--     'requests','push_subscriptions'
 --   ] loop
 --     execute format('drop policy if exists "staff all" on public.%I', t);
 --     execute format('drop policy if exists "staff all requests" on public.%I', t);
