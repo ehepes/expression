@@ -35,6 +35,8 @@ window.Store = (() => {
     item_exceptions: [],
     links: [],
     requests: [],
+    focus_weeks: [],
+    focus_ideas: [],
   };
 
   let mode = "local"; // "local" | "remote" | "local-error"
@@ -42,6 +44,18 @@ window.Store = (() => {
   let upgradeNeeded = false; // remote DB missing the members/week_assignments tables
   let state = Object.assign({}, EMPTY);
   const listeners = [];
+
+  // ----- auth (only meaningful in remote mode) -----
+  let user = null; // Supabase auth user, or null when signed out
+  let profile = null; // row from `profiles` (carries the person's role)
+  let authReady = false; // we've finished checking for an existing session
+  let realtimeSub = false; // realtime channel subscribed once
+  const authListeners = [];
+  const onAuth = (fn) => authListeners.push(fn);
+  const emitAuth = () => authListeners.forEach((fn) => fn());
+  // Staff = full app. Requester = request-only. No profile yet in remote mode
+  // means the DB is still open (pre-lockdown) so treat as staff.
+  const isStaff = () => !profile || profile.role === "admin" || profile.role === "editor";
 
   const uid = () =>
     crypto.randomUUID
@@ -82,9 +96,12 @@ window.Store = (() => {
     const w = (dow, title, notes, branch) => ({
       id: uid(), account: "main", title, notes: notes || "", branch: branch || "social",
       assignee: "", recurring: true, recur: "weekly", dow, nth: null,
-      date: null, start_date: null, end_date: null,
+      date: null, start_date: null, end_date: null, asset_url: "",
     });
     const m = (nth, dow, title, notes) => Object.assign(w(dow, title, notes), { recur: "monthly", nth });
+    // Weekly standing checklist task (Media / Editing): recurs every week with
+    // no fixed day (dow null), ticked off once per week.
+    const c = (branch, title, notes) => Object.assign(w(null, title, notes, branch), { dow: null });
     const p = (title, notes, assignee, status, due) => ({
       id: uid(), account: "main", title, notes: notes || "", assignee: assignee || "",
       status: status || "idea", due_date: due || null,
@@ -100,12 +117,10 @@ window.Store = (() => {
         w(0, "Story Recap", "Worship moment + key quote + Scripture + CTA + poll · 08:00–10:00"),
         w(0, "Invite to Prayer Story", "Use video from drive · 08:00–10:00"),
         w(0, "Sunday Reel", "Include engagement sticker (poll/question) · 08:00–10:00"),
-        w(0, "Upload Sunday sermon to YouTube", "", "editing"),
         // Tuesday
         w(1, "Prayer Story", "Scripture + prayer prompt + question sticker · 08:00–10:00"),
         w(1, "Podcast/YT Promo Story", "20-sec audiogram + subtitles + CTA: Listen on Spotify · 08:00–10:00"),
         w(1, "Expect Group Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
-        w(1, "Cut sermon highlights for Spotify podcast", "", "editing"),
         // Wednesday
         w(2, "Expect Socials Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
         w(2, "Join a Team Story", "Real face + 10-sec testimony + poll: Want info? · 08:00–10:00"),
@@ -123,8 +138,12 @@ window.Store = (() => {
         // Saturday
         w(5, "Encouragement Carousel", "Hook + Scripture + why Sunday matters + service time · 10:00"),
         w(5, "Countdown Story", "Who are you bringing? + location + parking · 10:00"),
-        // Sunday
-        w(6, "Service day — live stories + photo coverage", "", "media"),
+        // Editing team — weekly standing tasks (no fixed day)
+        c("editing", "Edit Spotify"),
+        c("editing", "Post Spotify"),
+        c("editing", "Edit YouTube"),
+        c("editing", "Post YouTube"),
+        // Media team starts with a blank weekly shoot list — added in-app.
       ],
       completions: [],
       projects: [
@@ -141,67 +160,156 @@ window.Store = (() => {
 
   // ----- remote (Supabase) -----
   async function fetchAll() {
-    const [items, completions, projects, members, weekAssignments, exceptions, links, requests] =
-      await Promise.all([
-        sb.from("items").select("*").order("created_at"),
-        sb.from("completions").select("*"),
-        sb.from("projects").select("*").order("created_at"),
-        sb.from("members").select("*").order("name"),
-        sb.from("week_assignments").select("*"),
-        sb.from("item_exceptions").select("*"),
-        sb.from("links").select("*").order("sort").order("created_at"),
-        sb.from("requests").select("*").order("created_at"),
-      ]);
-    const err = items.error || completions.error || projects.error;
-    if (err) throw err;
-    // members + later tables arrived in upgrades; if any don't exist yet the
-    // rest of the app must keep working, and we flag that an upgrade is due.
-    upgradeNeeded = !!(
-      members.error ||
-      weekAssignments.error ||
-      exceptions.error ||
-      links.error ||
-      requests.error
-    );
+    const [
+      items,
+      completions,
+      projects,
+      members,
+      weekAssignments,
+      exceptions,
+      links,
+      requests,
+      focusWeeks,
+      focusIdeas,
+    ] = await Promise.all([
+      sb.from("items").select("*").order("created_at"),
+      sb.from("completions").select("*"),
+      sb.from("projects").select("*").order("created_at"),
+      sb.from("members").select("*").order("name"),
+      sb.from("week_assignments").select("*"),
+      sb.from("item_exceptions").select("*"),
+      sb.from("links").select("*").order("sort").order("created_at"),
+      sb.from("requests").select("*").order("created_at"),
+      sb.from("focus_weeks").select("*"),
+      sb.from("focus_ideas").select("*").order("created_at"),
+    ]);
+    // Never throw: a per-table error can mean "not allowed" (a requester
+    // has no access to staff tables) or a transient network blip. In both
+    // cases we keep the last known rows for that table instead of wiping
+    // the screen. Staff-table errors only flag an upgrade for staff users.
+    upgradeNeeded =
+      isStaff() &&
+      !!(
+        members.error ||
+        weekAssignments.error ||
+        exceptions.error ||
+        links.error ||
+        focusWeeks.error ||
+        focusIdeas.error
+      );
+    const keep = (res, prev) => (res.error ? prev : res.data || []);
     state = {
-      items: items.data,
-      completions: completions.data,
-      projects: projects.data,
-      members: members.error ? [] : members.data,
-      week_assignments: weekAssignments.error ? [] : weekAssignments.data,
-      item_exceptions: exceptions.error ? [] : exceptions.data,
-      links: links.error ? [] : links.data,
-      requests: requests.error ? [] : requests.data,
+      items: keep(items, state.items),
+      completions: keep(completions, state.completions),
+      projects: keep(projects, state.projects),
+      members: keep(members, state.members),
+      week_assignments: keep(weekAssignments, state.week_assignments),
+      item_exceptions: keep(exceptions, state.item_exceptions),
+      links: keep(links, state.links),
+      requests: keep(requests, state.requests),
+      focus_weeks: keep(focusWeeks, state.focus_weeks),
+      focus_ideas: keep(focusIdeas, state.focus_ideas),
     };
+  }
+
+  function subscribeRealtime() {
+    if (realtimeSub) return;
+    realtimeSub = true;
+    sb.channel("db-changes")
+      .on("postgres_changes", { event: "*", schema: "public" }, async () => {
+        try {
+          await refreshProfile(); // pick up a role change made by an admin
+          await fetchAll();
+          emit();
+        } catch (e) {
+          console.error("Realtime refresh failed:", e);
+        }
+      })
+      .subscribe();
+  }
+
+  // Reload the signed-in person's profile; if their role changed (e.g. an admin
+  // promoted them), tell the app so it can swap them into the right view live.
+  async function refreshProfile() {
+    if (!user) return;
+    const before = profile ? profile.role : null;
+    await loadProfile();
+    const after = profile ? profile.role : null;
+    if (before !== after) emitAuth();
+  }
+
+  // Load the signed-in person's profile (which carries their role). If the
+  // signup trigger hasn't created a row yet, create a requester row.
+  async function loadProfile() {
+    if (!user) {
+      profile = null;
+      return;
+    }
+    const { data, error } = await sb.from("profiles").select("*").eq("id", user.id).maybeSingle();
+    if (error) {
+      console.error("Could not load profile:", error);
+      profile = null;
+      return;
+    }
+    profile = data;
+    if (!profile) {
+      const row = {
+        id: user.id,
+        email: user.email,
+        name: (user.user_metadata && user.user_metadata.name) || "",
+        role: "requester",
+      };
+      const ins = await sb.from("profiles").insert(row).select("*").maybeSingle();
+      if (!ins.error) profile = ins.data;
+    }
+  }
+
+  // React to a session appearing/disappearing (sign in, sign out, restore).
+  async function handleAuth(session) {
+    user = session ? session.user : null;
+    if (user) {
+      await loadProfile();
+      subscribeRealtime();
+      try {
+        await fetchAll();
+      } catch (e) {
+        console.error("Load after sign-in failed:", e);
+      }
+    } else {
+      profile = null;
+      state = Object.assign({}, EMPTY);
+    }
+    authReady = true;
+    emitAuth();
+    emit();
   }
 
   async function init() {
     const cfg = window.EXPRESSION_CONFIG || {};
     if (cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && window.supabase) {
+      mode = "remote";
+      sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true, storageKey: "expression-auth" },
+      });
+      // Keep the app in sync with sign-in/out on this and other tabs. A silent
+      // hourly token refresh keeps the same session, so it needs no reload.
+      sb.auth.onAuthStateChange((event, session) => {
+        if (event === "TOKEN_REFRESHED") return;
+        handleAuth(session).catch((e) => console.error(e));
+      });
       try {
-        sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-        await fetchAll();
-        mode = "remote";
-        sb.channel("db-changes")
-          .on("postgres_changes", { event: "*", schema: "public" }, async () => {
-            try {
-              await fetchAll();
-              emit();
-            } catch (e) {
-              console.error("Realtime refresh failed:", e);
-            }
-          })
-          .subscribe();
+        const { data } = await sb.auth.getSession();
+        await handleAuth(data.session);
       } catch (e) {
-        console.error("Supabase unavailable, falling back to this device only:", e);
-        mode = "local-error";
-        sb = null;
-        loadLocal();
+        console.error("Auth check failed:", e);
+        authReady = true;
       }
     } else {
       loadLocal();
+      authReady = true;
     }
     emit();
+    emitAuth();
   }
 
   function remoteFail(error) {
@@ -221,6 +329,8 @@ window.Store = (() => {
   // ----- items -----
   function itemRow(it) {
     const recurring = !!it.recurring;
+    let asset_url = (it.asset_url || "").trim();
+    if (asset_url && !/^https?:\/\//i.test(asset_url)) asset_url = "https://" + asset_url;
     return {
       id: it.id,
       account: it.account || "main",
@@ -228,6 +338,7 @@ window.Store = (() => {
       notes: it.notes || "",
       branch: it.branch,
       assignee: it.assignee || "",
+      asset_url,
       recurring,
       recur: recurring ? it.recur || "weekly" : null,
       dow: recurring ? it.dow : null,
@@ -318,6 +429,7 @@ window.Store = (() => {
     if (sb) {
       const { error } = await sb.from("projects").insert(r);
       if (error) return remoteFail(error);
+      if (r.assignee) notifyAssignee(r.assignee, "New project assigned to you", r.title);
       return afterRemoteWrite();
     }
     state.projects.push(r);
@@ -329,9 +441,12 @@ window.Store = (() => {
     const current = state.projects.find((r) => r.id === id);
     if (!current) return;
     const next = projectRow(Object.assign({}, current, fields, { id }));
+    const assigneeChanged =
+      next.assignee && next.assignee.toLowerCase() !== (current.assignee || "").toLowerCase();
     if (sb) {
       const { error } = await sb.from("projects").update(next).eq("id", id);
       if (error) return remoteFail(error);
+      if (assigneeChanged) notifyAssignee(next.assignee, "Project assigned to you", next.title);
       return afterRemoteWrite();
     }
     Object.assign(current, next);
@@ -368,6 +483,21 @@ window.Store = (() => {
     emit();
   }
 
+  // Toggle whether a team member is pushed a notification on new requests.
+  async function setMemberNotify(id, on) {
+    if (sb) {
+      const { error } = await sb.from("members").update({ notify_requests: !!on }).eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    const m = state.members.find((x) => x.id === id);
+    if (m) {
+      m.notify_requests = !!on;
+      saveLocal();
+      emit();
+    }
+  }
+
   // ----- week assignments (posting duty for a whole week) -----
   async function setWeekAssignment(acct, weekStartStr, assignee) {
     assignee = (assignee || "").trim();
@@ -378,6 +508,7 @@ window.Store = (() => {
             .upsert({ account: acct, week_start: weekStartStr, assignee }, { onConflict: "account,week_start" })
         : await sb.from("week_assignments").delete().eq("account", acct).eq("week_start", weekStartStr);
       if (error) return remoteFail(error);
+      if (assignee) notifyAssignee(assignee, "You're on posting duty this week", "Week of " + weekStartStr);
       return afterRemoteWrite();
     }
     state.week_assignments = state.week_assignments.filter(
@@ -466,8 +597,26 @@ window.Store = (() => {
       title: r.title,
       details: r.details || "",
       requested_by: r.requested_by || "",
+      due_date: r.due_date || null, // "required by"
       status: r.status || "pending", // pending | approved | declined
     };
+  }
+
+  // Ask the Edge Function to push everyone flagged to receive new requests.
+  // Recipients are resolved server-side, so even a requester (who can't read
+  // the team list) can trigger the alert. Fire-and-forget.
+  function notifyNewRequest(r) {
+    if (!sb) return;
+    sb.functions
+      .invoke("NOTIFY", {
+        body: {
+          mode: "request",
+          title: r.title,
+          account: r.account || "main",
+          requested_by: r.requested_by || "",
+        },
+      })
+      .catch((e) => console.error("request notify failed:", e));
   }
 
   async function addRequest(fields) {
@@ -475,6 +624,7 @@ window.Store = (() => {
     if (sb) {
       const { error } = await sb.from("requests").insert(r);
       if (error) return remoteFail(error);
+      notifyNewRequest(r);
       return afterRemoteWrite();
     }
     state.requests.push(r);
@@ -507,9 +657,185 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- focus (weekly theme + content ideas to shoot ahead) -----
+  async function setFocusTitle(acct, weekStartStr, title) {
+    title = (title || "").trim();
+    if (sb) {
+      const { error } = await sb
+        .from("focus_weeks")
+        .upsert({ account: acct, week_start: weekStartStr, title }, { onConflict: "account,week_start" });
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    const row = state.focus_weeks.find(
+      (w) => (w.account || "main") === acct && w.week_start === weekStartStr
+    );
+    if (row) row.title = title;
+    else state.focus_weeks.push({ id: uid(), account: acct, week_start: weekStartStr, title });
+    saveLocal();
+    emit();
+  }
+
+  function focusIdeaRow(r) {
+    let concept_url = (r.concept_url || "").trim();
+    if (concept_url && !/^https?:\/\//i.test(concept_url)) concept_url = "https://" + concept_url;
+    return {
+      id: r.id,
+      account: r.account || "main",
+      week_start: r.week_start,
+      type: ["reel", "post", "carousel"].includes(r.type) ? r.type : "reel",
+      description: (r.description || "").trim(),
+      concept_url,
+      shot: !!r.shot,
+    };
+  }
+
+  async function addFocusIdea(fields) {
+    const r = focusIdeaRow(Object.assign({ id: uid() }, fields));
+    if (sb) {
+      const { error } = await sb.from("focus_ideas").insert(r);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.focus_ideas.push(r);
+    saveLocal();
+    emit();
+  }
+
+  async function updateFocusIdea(id, fields) {
+    const current = state.focus_ideas.find((r) => r.id === id);
+    if (!current) return;
+    const next = focusIdeaRow(Object.assign({}, current, fields, { id }));
+    if (sb) {
+      const { error } = await sb.from("focus_ideas").update(next).eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    Object.assign(current, next);
+    saveLocal();
+    emit();
+  }
+
+  async function deleteFocusIdea(id) {
+    if (sb) {
+      const { error } = await sb.from("focus_ideas").delete().eq("id", id);
+      if (error) return remoteFail(error);
+      return afterRemoteWrite();
+    }
+    state.focus_ideas = state.focus_ideas.filter((r) => r.id !== id);
+    saveLocal();
+    emit();
+  }
+
+  // ----- web push (closed-app notifications) -----
+  function urlBase64ToUint8Array(base64String) {
+    const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
+    const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  // Subscribe THIS device to push and store it against the person's name, so a
+  // later assignment to that name reaches every device they've enabled.
+  async function enablePush(name) {
+    const cfg = window.EXPRESSION_CONFIG || {};
+    if (!sb) return { ok: false, reason: "Team sync must be on." };
+    if (!cfg.VAPID_PUBLIC_KEY) return { ok: false, reason: "Push isn't configured yet." };
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
+      return { ok: false, reason: "This browser doesn't support push notifications." };
+    }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(cfg.VAPID_PUBLIC_KEY),
+      });
+      const j = sub.toJSON();
+      const row = {
+        name: (name || "").trim().toLowerCase(),
+        endpoint: j.endpoint,
+        p256dh: j.keys.p256dh,
+        auth: j.keys.auth,
+      };
+      const { error } = await sb.from("push_subscriptions").upsert(row, { onConflict: "endpoint" });
+      if (error) return { ok: false, reason: error.message };
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: (e && e.message) || String(e) };
+    }
+  }
+
+  // Ask the Supabase Edge Function to push to everyone registered under `name`.
+  // Fire-and-forget: if push isn't set up yet, this fails quietly.
+  function notifyAssignee(name, title, body) {
+    if (!sb || !name) return;
+    sb.functions
+      .invoke("NOTIFY", {
+        body: { name: String(name).trim().toLowerCase(), title, body: body || "", url: "./" },
+      })
+      .catch((e) => console.error("push notify failed:", e));
+  }
+
+  // ----- auth actions -----
+  async function signUp(email, password, name) {
+    if (!sb) return { error: { message: "Sign-in needs team sync (Supabase) configured." } };
+    return sb.auth.signUp({
+      email: (email || "").trim(),
+      password,
+      options: { data: { name: (name || "").trim() } },
+    });
+  }
+
+  async function signIn(email, password) {
+    if (!sb) return { error: { message: "Sign-in needs team sync (Supabase) configured." } };
+    return sb.auth.signInWithPassword({ email: (email || "").trim(), password });
+  }
+
+  async function signOut() {
+    if (sb) await sb.auth.signOut();
+  }
+
+  // Admin-only in practice (RLS blocks others): list everyone and set roles.
+  async function listProfiles() {
+    if (!sb) return { data: [], error: null };
+    const { data, error } = await sb.from("profiles").select("*").order("email");
+    if (error) console.error("Could not list people:", error);
+    return { data: data || [], error };
+  }
+
+  async function setRole(id, role) {
+    if (!sb) return { error: { message: "Unavailable." } };
+    const { error } = await sb.from("profiles").update({ role }).eq("id", id);
+    return { error };
+  }
+
   return {
     init,
     onChange,
+    onAuth,
+    signUp,
+    signIn,
+    signOut,
+    listProfiles,
+    setRole,
+    getUser: () => user,
+    getProfile: () => profile,
+    getRole: () => (profile ? profile.role : null),
+    refresh: async () => {
+      if (!sb || !user) return;
+      try {
+        await refreshProfile();
+        await fetchAll();
+        emit();
+      } catch (e) {
+        console.error("Refresh failed:", e);
+      }
+    },
+    isAuthReady: () => authReady,
+    isAuthMode: () => mode === "remote",
+    isStaff,
     get: () => state,
     getMode: () => mode,
     needsUpgrade: () => upgradeNeeded,
@@ -522,6 +848,7 @@ window.Store = (() => {
     updateProject,
     deleteProject,
     addMember,
+    setMemberNotify,
     setWeekAssignment,
     isException,
     addException,
@@ -531,5 +858,10 @@ window.Store = (() => {
     addRequest,
     updateRequest,
     deleteRequest,
+    setFocusTitle,
+    addFocusIdea,
+    updateFocusIdea,
+    deleteFocusIdea,
+    enablePush,
   };
 })();

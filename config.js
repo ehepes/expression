@@ -15,5 +15,12 @@
 // ---------------------------------------------------------------
 window.EXPRESSION_CONFIG = {
   SUPABASE_URL: "https://lboueyjikfjtycymigtw.supabase.co",
-  SUPABASE_ANON_KEY: "sb_publishable_jy9ovCKRPW-G1B0QjWELuQ_RlE26hwv",
+  // Legacy "anon public" JWT key. Used (instead of the newer sb_publishable_
+  // key) because Edge Functions accept it by default — so push works without
+  // having to disable "Verify JWT" on the function. Safe to expose (public key).
+  SUPABASE_ANON_KEY:
+    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imxib3VleWppa2ZqdHljeW1pZ3R3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMDAxMjQsImV4cCI6MjA5Njc3NjEyNH0.da5mcPwQH-4uPBjWth7DZdvGJhavhDHpTVRhoy42f38",
+  // Public half of the Web Push (VAPID) key. Safe to expose — the private half
+  // lives only as a secret in Supabase. See supabase/PUSH-SETUP.md.
+  VAPID_PUBLIC_KEY: "BG66k15619dm35UKc9r6vPAbft76i8Iv8RL1t6TvnuTv5kQgGmgkKBlBV4MrxcKREsQ8Xw8JFGFB4Ht3OsHn34A",
 };
