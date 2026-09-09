@@ -1,5 +1,7 @@
 /* EXPRESSION — media team hub. UI layer. */
 
+const APP_VERSION = "v20"; // shown in Settings so we can confirm a device updated
+
 const ACCOUNTS = {
   main: "Main Church",
   ya: "YA",
@@ -1055,6 +1057,7 @@ function openSettingsModal() {
           <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
           <button type="submit" class="primary-btn">Save</button>
         </div>
+        <p class="version-tag">Expression · ${APP_VERSION}</p>
       </form>
     </div>`;
   const form = document.getElementById("settings-form");
@@ -1980,6 +1983,8 @@ Store.onChange(() => {
     checkAssignments();
     morningReminder();
   }
+  // If the admin has the People panel open, refresh it live as people sign up.
+  if (document.getElementById("people-list")) populatePeopleList();
   paint();
 });
 Store.onAuth(() => {

@@ -1196,3 +1196,5 @@ body[data-access="request-only"] #banner {
 }
 .focus-add { margin-top: 4px; }
 .focus-more { width: 100%; margin: 4px 0 30px; }
+
+.version-tag { text-align: center; color: var(--muted); font-size: 11px; margin: 12px 0 0; opacity: 0.7; }
