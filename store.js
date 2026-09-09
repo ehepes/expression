@@ -43,6 +43,18 @@ window.Store = (() => {
   let state = Object.assign({}, EMPTY);
   const listeners = [];
 
+  // ----- auth (only meaningful in remote mode) -----
+  let user = null; // Supabase auth user, or null when signed out
+  let profile = null; // row from `profiles` (carries the person's role)
+  let authReady = false; // we've finished checking for an existing session
+  let realtimeSub = false; // realtime channel subscribed once
+  const authListeners = [];
+  const onAuth = (fn) => authListeners.push(fn);
+  const emitAuth = () => authListeners.forEach((fn) => fn());
+  // Staff = full app. Requester = request-only. No profile yet in remote mode
+  // means the DB is still open (pre-lockdown) so treat as staff.
+  const isStaff = () => !profile || profile.role === "admin" || profile.role === "editor";
+
   const uid = () =>
     crypto.randomUUID
       ? crypto.randomUUID()
@@ -157,56 +169,113 @@ window.Store = (() => {
         sb.from("links").select("*").order("sort").order("created_at"),
         sb.from("requests").select("*").order("created_at"),
       ]);
-    const err = items.error || completions.error || projects.error;
-    if (err) throw err;
-    // members + later tables arrived in upgrades; if any don't exist yet the
-    // rest of the app must keep working, and we flag that an upgrade is due.
-    upgradeNeeded = !!(
-      members.error ||
-      weekAssignments.error ||
-      exceptions.error ||
-      links.error ||
-      requests.error
-    );
+    // Never throw: a per-table error can mean "not allowed" (a requester
+    // has no access to staff tables) or a transient network blip. In both
+    // cases we keep the last known rows for that table instead of wiping
+    // the screen. Staff-table errors only flag an upgrade for staff users.
+    upgradeNeeded =
+      isStaff() &&
+      !!(members.error || weekAssignments.error || exceptions.error || links.error);
+    const keep = (res, prev) => (res.error ? prev : res.data || []);
     state = {
-      items: items.data,
-      completions: completions.data,
-      projects: projects.data,
-      members: members.error ? [] : members.data,
-      week_assignments: weekAssignments.error ? [] : weekAssignments.data,
-      item_exceptions: exceptions.error ? [] : exceptions.data,
-      links: links.error ? [] : links.data,
-      requests: requests.error ? [] : requests.data,
+      items: keep(items, state.items),
+      completions: keep(completions, state.completions),
+      projects: keep(projects, state.projects),
+      members: keep(members, state.members),
+      week_assignments: keep(weekAssignments, state.week_assignments),
+      item_exceptions: keep(exceptions, state.item_exceptions),
+      links: keep(links, state.links),
+      requests: keep(requests, state.requests),
     };
+  }
+
+  function subscribeRealtime() {
+    if (realtimeSub) return;
+    realtimeSub = true;
+    sb.channel("db-changes")
+      .on("postgres_changes", { event: "*", schema: "public" }, async () => {
+        try {
+          await fetchAll();
+          emit();
+        } catch (e) {
+          console.error("Realtime refresh failed:", e);
+        }
+      })
+      .subscribe();
+  }
+
+  // Load the signed-in person's profile (which carries their role). If the
+  // signup trigger hasn't created a row yet, create a requester row.
+  async function loadProfile() {
+    if (!user) {
+      profile = null;
+      return;
+    }
+    const { data, error } = await sb.from("profiles").select("*").eq("id", user.id).maybeSingle();
+    if (error) {
+      console.error("Could not load profile:", error);
+      profile = null;
+      return;
+    }
+    profile = data;
+    if (!profile) {
+      const row = {
+        id: user.id,
+        email: user.email,
+        name: (user.user_metadata && user.user_metadata.name) || "",
+        role: "requester",
+      };
+      const ins = await sb.from("profiles").insert(row).select("*").maybeSingle();
+      if (!ins.error) profile = ins.data;
+    }
+  }
+
+  // React to a session appearing/disappearing (sign in, sign out, restore).
+  async function handleAuth(session) {
+    user = session ? session.user : null;
+    if (user) {
+      await loadProfile();
+      subscribeRealtime();
+      try {
+        await fetchAll();
+      } catch (e) {
+        console.error("Load after sign-in failed:", e);
+      }
+    } else {
+      profile = null;
+      state = Object.assign({}, EMPTY);
+    }
+    authReady = true;
+    emitAuth();
+    emit();
   }
 
   async function init() {
     const cfg = window.EXPRESSION_CONFIG || {};
     if (cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY && window.supabase) {
+      mode = "remote";
+      sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY, {
+        auth: { persistSession: true, autoRefreshToken: true, storageKey: "expression-auth" },
+      });
+      // Keep the app in sync with sign-in/out on this and other tabs. A silent
+      // hourly token refresh keeps the same session, so it needs no reload.
+      sb.auth.onAuthStateChange((event, session) => {
+        if (event === "TOKEN_REFRESHED") return;
+        handleAuth(session).catch((e) => console.error(e));
+      });
       try {
-        sb = window.supabase.createClient(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
-        await fetchAll();
-        mode = "remote";
-        sb.channel("db-changes")
-          .on("postgres_changes", { event: "*", schema: "public" }, async () => {
-            try {
-              await fetchAll();
-              emit();
-            } catch (e) {
-              console.error("Realtime refresh failed:", e);
-            }
-          })
-          .subscribe();
+        const { data } = await sb.auth.getSession();
+        await handleAuth(data.session);
       } catch (e) {
-        console.error("Supabase unavailable, falling back to this device only:", e);
-        mode = "local-error";
-        sb = null;
-        loadLocal();
+        console.error("Auth check failed:", e);
+        authReady = true;
       }
     } else {
       loadLocal();
+      authReady = true;
     }
     emit();
+    emitAuth();
   }
 
   function remoteFail(error) {
@@ -572,9 +641,57 @@ window.Store = (() => {
       .catch((e) => console.error("push notify failed:", e));
   }
 
+  // ----- auth actions -----
+  async function signUp(email, password, name) {
+    if (!sb) return { error: { message: "Sign-in needs team sync (Supabase) configured." } };
+    return sb.auth.signUp({
+      email: (email || "").trim(),
+      password,
+      options: { data: { name: (name || "").trim() } },
+    });
+  }
+
+  async function signIn(email, password) {
+    if (!sb) return { error: { message: "Sign-in needs team sync (Supabase) configured." } };
+    return sb.auth.signInWithPassword({ email: (email || "").trim(), password });
+  }
+
+  async function signOut() {
+    if (sb) await sb.auth.signOut();
+  }
+
+  // Admin-only in practice (RLS blocks others): list everyone and set roles.
+  async function listProfiles() {
+    if (!sb) return [];
+    const { data, error } = await sb.from("profiles").select("*").order("email");
+    if (error) {
+      console.error("Could not list people:", error);
+      return [];
+    }
+    return data || [];
+  }
+
+  async function setRole(id, role) {
+    if (!sb) return { error: { message: "Unavailable." } };
+    const { error } = await sb.from("profiles").update({ role }).eq("id", id);
+    return { error };
+  }
+
   return {
     init,
     onChange,
+    onAuth,
+    signUp,
+    signIn,
+    signOut,
+    listProfiles,
+    setRole,
+    getUser: () => user,
+    getProfile: () => profile,
+    getRole: () => (profile ? profile.role : null),
+    isAuthReady: () => authReady,
+    isAuthMode: () => mode === "remote",
+    isStaff,
     get: () => state,
     getMode: () => mode,
     needsUpgrade: () => upgradeNeeded,

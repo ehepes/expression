@@ -137,6 +137,71 @@ alter publication supabase_realtime add table links;
 alter publication supabase_realtime add table requests;
 
 -- ---------------------------------------------------------------
+-- Accounts & roles foundation.
+--
+-- With the "team access" policies above, the app is open to anyone with the
+-- link. To restrict it to signed-in people (and give a "request only" role),
+-- this block adds the profiles table + role helpers, then run
+-- supabase/auth-cutover.sql to swap the open policies for role-based ones.
+--
+-- IMPORTANT: change the owner email below to the person who should be the
+-- first admin — they become admin automatically the first time they sign in.
+-- ---------------------------------------------------------------
+create table if not exists profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  email text,
+  name text not null default '',
+  role text not null default 'requester' check (role in ('admin','editor','requester')),
+  created_at timestamptz not null default now()
+);
+alter table profiles enable row level security;
+
+create or replace function public.my_role()
+returns text language sql stable security definer set search_path = public as $$
+  select role from public.profiles where id = auth.uid()
+$$;
+create or replace function public.is_staff()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role in ('admin','editor'))
+$$;
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and role = 'admin')
+$$;
+
+drop policy if exists "own profile read" on profiles;
+create policy "own profile read" on profiles for select
+  using (id = auth.uid() or public.is_admin());
+drop policy if exists "self insert profile" on profiles;
+create policy "self insert profile" on profiles for insert
+  with check (id = auth.uid());
+drop policy if exists "profile update" on profiles;
+create policy "profile update" on profiles for update
+  using (id = auth.uid() or public.is_admin())
+  with check (public.is_admin() or role = public.my_role());
+
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into public.profiles (id, email, name, role)
+  values (
+    new.id,
+    new.email,
+    coalesce(new.raw_user_meta_data->>'name', ''),
+    case when lower(new.email) = lower('ehepes@yahoo.com') then 'admin' else 'requester' end
+  )
+  on conflict (id) do nothing;
+  return new;
+end $$;
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+alter table requests add column if not exists created_by uuid
+  references auth.users(id) on delete set null default auth.uid();
+
+-- ---------------------------------------------------------------
 -- Main Church standard weekly Instagram schedule (from the team's
 -- posting calendar). All editable in the app afterwards.
 -- ---------------------------------------------------------------

@@ -104,6 +104,38 @@ single-week edits, links, requests). The app shows a banner until it's done.
 
 It gets its own icon, opens full-screen, and works offline.
 
+## 4. Restrict who can access (optional, recommended once the team grows)
+
+Out of the box, anyone with the link can view and change everything. To lock
+it down so people must sign in — and so most people can **only send requests**
+— turn on accounts:
+
+1. **Add the accounts foundation** (safe; changes nothing yet). If you set up
+   sync recently it's already included in `supabase/schema.sql`; otherwise run
+   that block once in the SQL Editor.
+2. **Allow password sign-in without emails:** in Supabase go to
+   **Authentication → Providers → Email**, keep it **enabled**, and turn
+   **OFF “Confirm email.”** (This lets people set a password without needing an
+   email service. Note: with confirmation off, “forgot password” won’t email a
+   reset — an admin can reset a password from the Supabase dashboard, or you
+   can connect a free email service later.)
+3. **Lock it down:** run `supabase/auth-cutover.sql` once in the SQL Editor.
+4. **Become admin:** open the app and **create your account** with the owner
+   email (the one set in the schema — `handle_new_user`). That email becomes an
+   **admin** automatically.
+
+**Roles**
+
+| Role | Can do |
+|---|---|
+| **Requester** | Only send requests and see their own. This is what everyone gets by default. |
+| **Editor** | The full app — calendar, projects, approve/decline requests. |
+| **Admin** | Everything an editor can, plus manage people’s roles. |
+
+Promote someone from Requester to Editor/Admin in **Settings ⚙ → People &
+access** (visible to admins only). Everyone signs in **once**; the app keeps
+them signed in afterwards.
+
 ## Using the app
 
 - **Week** tab: tap **+** on any day to add a post or task. Choose *One

@@ -990,6 +990,8 @@ function openProjectModal(id) {
 function openSettingsModal() {
   const prefs = getPrefs();
   const granted = "Notification" in window && Notification.permission === "granted";
+  const user = Store.getUser();
+  const isAdmin = Store.getRole() === "admin";
   document.getElementById("modal-root").innerHTML = `
     <div class="modal-overlay" data-action="close-modal">
       <form class="modal" id="settings-form">
@@ -1004,6 +1006,28 @@ function openSettingsModal() {
             ${granted ? "Notifications enabled ✓" : "Allow notifications on this device"}
           </button>
         </div>
+        ${
+          isAdmin
+            ? `<div class="field people-field">
+                 <label>People &amp; access</label>
+                 <p class="hint">Set what each person can do. <b>Requester</b> can only send requests; <b>Editor</b> gets the full app; <b>Admin</b> can also manage people here.</p>
+                 <div id="people-list" class="people-list"><p class="hint">Loading people…</p></div>
+               </div>`
+            : ""
+        }
+        ${
+          user
+            ? `<div class="field account-field">
+                 <label>Signed in</label>
+                 <div class="account-row">
+                   <span class="account-email">${esc(user.email)}${
+                     Store.getRole() ? ` &middot; ${esc(Store.getRole())}` : ""
+                   }</span>
+                   <button type="button" class="ghost-btn small" data-action="sign-out">Sign out</button>
+                 </div>
+               </div>`
+            : ""
+        }
         <div class="modal-actions">
           <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
           <button type="submit" class="primary-btn">Save</button>
@@ -1022,6 +1046,42 @@ function openSettingsModal() {
     }
     closeModal();
   });
+  if (isAdmin) populatePeopleList();
+}
+
+// Admin-only: list everyone who has signed in, with a role dropdown each.
+async function populatePeopleList() {
+  const box = document.getElementById("people-list");
+  if (!box) return;
+  const people = await Store.listProfiles();
+  const meId = Store.getUser() && Store.getUser().id;
+  if (!people.length) {
+    box.innerHTML = '<p class="hint">No one has signed in yet.</p>';
+    return;
+  }
+  const roleOpts = (role) =>
+    [
+      ["requester", "Requester"],
+      ["editor", "Editor"],
+      ["admin", "Admin"],
+    ]
+      .map(([k, name]) => `<option value="${k}" ${role === k ? "selected" : ""}>${name}</option>`)
+      .join("");
+  box.innerHTML = people
+    .map((p) => {
+      const self = p.id === meId;
+      return `
+      <div class="person-row">
+        <div class="person-id">
+          <span class="person-name">${esc(p.name || p.email)}</span>
+          ${p.name ? `<span class="person-email">${esc(p.email)}</span>` : ""}
+        </div>
+        <select class="person-role" data-role-for="${p.id}" ${self ? "disabled title='You can’t change your own role'" : ""}>
+          ${roleOpts(p.role)}
+        </select>
+      </div>`;
+    })
+    .join("");
 }
 
 // ----- assignment notifications (works while the app is open, team sync on) -----
@@ -1224,7 +1284,8 @@ function renderRequests() {
 }
 
 function openRequestModal() {
-  const r = { title: "", details: "", requested_by: getPrefs().myName || "", account, due_date: "" };
+  const myName = getPrefs().myName || (Store.getProfile() && Store.getProfile().name) || "";
+  const r = { title: "", details: "", requested_by: myName, account, due_date: "" };
   const acctOpts = Object.entries(ACCOUNTS)
     .map(([k, name]) => `<option value="${k}" ${(r.account || "main") === k ? "selected" : ""}>${name}</option>`)
     .join("");
@@ -1435,6 +1496,17 @@ document.addEventListener("click", (e) => {
         openSettingsModal();
       });
       break;
+    case "auth-toggle":
+      authMode = authMode === "signup" ? "signin" : "signup";
+      authError = "";
+      paint();
+      break;
+    case "sign-out":
+      if (confirm("Sign out of this device?")) {
+        closeModal();
+        Store.signOut();
+      }
+      break;
     case "close-modal":
       closeModal();
       break;
@@ -1451,8 +1523,194 @@ document.addEventListener("change", (e) => {
     account = e.target.value;
     setPrefs({ account });
     render();
+  } else if (e.target.classList && e.target.classList.contains("person-role")) {
+    const id = e.target.dataset.roleFor;
+    const role = e.target.value;
+    e.target.disabled = true;
+    Store.setRole(id, role).then(({ error }) => {
+      e.target.disabled = false;
+      if (error) {
+        alert("Couldn’t update that person’s access: " + (error.message || "unknown error"));
+        populatePeopleList();
+      }
+    });
   }
 });
+
+// ----- access gate (sign-in / roles) -----
+// Only applies in team-sync (remote) mode. In local mode the app runs open,
+// exactly as before.
+let authMode = "signin"; // "signin" | "signup"
+let authBusy = false;
+let authError = "";
+let authEmail = ""; // preserved across re-renders so a failed try doesn't wipe it
+
+function currentAccessView() {
+  if (!Store.isAuthMode()) return "app"; // local mode: no sign-in required
+  if (!Store.isAuthReady()) return "loading";
+  if (!Store.getUser()) return "auth";
+  return Store.isStaff() ? "app" : "request-only";
+}
+
+// Top-level painter: decides between the sign-in screen, the request-only
+// screen, and the full app, then hands off to the right renderer.
+function paint() {
+  const v = currentAccessView();
+  document.body.dataset.access = v;
+  const view = document.getElementById("view");
+  if (v === "loading") {
+    view.innerHTML = '<div class="auth-screen"><div class="auth-card"><p>Loading…</p></div></div>';
+    return;
+  }
+  if (v === "auth") {
+    view.innerHTML = renderAuth();
+    wireAuthForm();
+    return;
+  }
+  if (v === "request-only") {
+    view.innerHTML = renderRequestOnly();
+    return;
+  }
+  render(); // full staff app
+}
+
+function renderAuth() {
+  const signup = authMode === "signup";
+  return `
+    <div class="auth-screen">
+      <div class="auth-card">
+        <h2>${signup ? "Create your account" : "Sign in"}</h2>
+        <p class="auth-sub">${
+          signup
+            ? "Set a password to join the Expression hub."
+            : "Welcome back to the Expression hub."
+        }</p>
+        <form id="auth-form" autocomplete="on">
+          ${
+            signup
+              ? '<div class="field"><label>Your name</label><input type="text" name="name" autocomplete="name" placeholder="First name is fine" /></div>'
+              : ""
+          }
+          <div class="field">
+            <label>Email</label>
+            <input type="email" name="email" required autocomplete="email" value="${esc(authEmail)}" placeholder="you@example.com" />
+          </div>
+          <div class="field">
+            <label>Password</label>
+            <input type="password" name="password" required minlength="6" autocomplete="${
+              signup ? "new-password" : "current-password"
+            }" placeholder="${signup ? "At least 6 characters" : ""}" />
+          </div>
+          ${authError ? `<div class="auth-error">${esc(authError)}</div>` : ""}
+          <button type="submit" class="primary-btn auth-submit" ${authBusy ? "disabled" : ""}>
+            ${authBusy ? "Please wait…" : signup ? "Create account" : "Sign in"}
+          </button>
+        </form>
+        <button type="button" class="link-btn" data-action="auth-toggle">
+          ${signup ? "Already have an account? Sign in" : "New to the team? Create an account"}
+        </button>
+      </div>
+    </div>`;
+}
+
+function friendlyAuthError(error, signup) {
+  const m = ((error && error.message) || "").toLowerCase();
+  if (m.includes("invalid login")) return "That email or password isn’t right.";
+  if (m.includes("already registered") || m.includes("already been registered"))
+    return "That email already has an account — sign in instead.";
+  if (m.includes("email not confirmed"))
+    return "Your email isn’t confirmed yet. Ask the admin to turn off email confirmation, then try again.";
+  if (m.includes("password")) return "Password needs to be at least 6 characters.";
+  if (signup && m.includes("signups not allowed"))
+    return "Sign-ups are turned off in Supabase. Ask the admin to enable the email provider.";
+  return (error && error.message) || "Something went wrong. Please try again.";
+}
+
+function wireAuthForm() {
+  const form = document.getElementById("auth-form");
+  if (!form) return;
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    if (authBusy) return;
+    authEmail = form.email.value.trim();
+    const password = form.password.value;
+    const name = form.name ? form.name.value.trim() : "";
+    const signup = authMode === "signup";
+    authBusy = true;
+    authError = "";
+    paint();
+    try {
+      const res = signup
+        ? await Store.signUp(authEmail, password, name)
+        : await Store.signIn(authEmail, password);
+      if (res.error) {
+        authError = friendlyAuthError(res.error, signup);
+      } else if (signup && res.data && !res.data.session) {
+        // No session back on sign-up = email confirmation is still on.
+        authMode = "signin";
+        authError =
+          "Account created. If you can’t sign in yet, ask the admin to turn off email confirmation in Supabase.";
+      }
+      // On success a session arrives via onAuthStateChange, which repaints
+      // into the app automatically.
+    } catch (err) {
+      authError = (err && err.message) || "Something went wrong. Please try again.";
+    }
+    authBusy = false;
+    paint();
+  });
+  const first = form.querySelector('input:not([value]), input[value=""]') || form.querySelector("input");
+  if (first) first.focus();
+}
+
+// Request-only screen: everything a "requester" can do — send a request and
+// see the ones they've sent. No calendar, projects or approvals.
+function renderRequestOnly() {
+  const me = Store.getUser();
+  const mine = Store.get().requests;
+  const cards = mine.length
+    ? mine
+        .map((r) => {
+          const st = r.status || "pending";
+          const label =
+            st === "approved" ? "Approved &#127881;" : st === "declined" ? "Not this time" : "Awaiting review";
+          const color =
+            st === "approved"
+              ? "#DFF7EA;color:#0E8A50"
+              : st === "declined"
+              ? "#EDF1F7;color:#5B6B8C"
+              : "#FFF1DF;color:#C26A00";
+          return `
+        <div class="request-card">
+          <div class="request-top">
+            <div class="request-title">${esc(r.title)}</div>
+            <span class="status-chip" style="background:${color}">${label}</span>
+          </div>
+          ${r.details ? `<div class="request-notes">${esc(r.details)}</div>` : ""}
+          <div class="request-meta">
+            <span>&#127991; ${esc(ACCOUNTS[r.account || "main"] || "Main Church")}</span>
+            ${r.due_date ? `<span>&#128197; required by ${esc(r.due_date)}</span>` : ""}
+          </div>
+        </div>`;
+        })
+        .join("")
+    : '<div class="empty-state">You haven’t sent any requests yet.<br/>Tap <b>New request</b> to ask the media team for content.</div>';
+  return `
+    <div class="ro-wrap">
+      <div class="ro-head">
+        <div>
+          <h2>Request content</h2>
+          <p class="ro-sub">Send the Expression media team a request — they’ll review it and follow up.</p>
+        </div>
+        <button class="primary-btn" data-action="add-request">+ New request</button>
+      </div>
+      <div class="section-title">Your requests</div>
+      ${cards}
+      <button class="ghost-btn ro-signout" data-action="sign-out">Sign out${
+        me ? ` &middot; ${esc(me.email)}` : ""
+      }</button>
+    </div>`;
+}
 
 // ----- boot -----
 function initAccountSelect() {
@@ -1465,9 +1723,18 @@ function initAccountSelect() {
 
 initAccountSelect();
 Store.onChange(() => {
-  checkAssignments();
-  morningReminder();
-  render();
+  if (currentAccessView() === "app") {
+    checkAssignments();
+    morningReminder();
+  }
+  paint();
+});
+Store.onAuth(() => {
+  // Seed the per-device "your name" from the profile the first time, so
+  // assignments and the request form know who this is.
+  const p = Store.getProfile();
+  if (p && p.name && !getPrefs().myName) setPrefs({ myName: p.name });
+  paint();
 });
 Store.init();
 
