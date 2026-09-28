@@ -6,17 +6,30 @@ It covers the three branches of the team:
 | Branch | What it does in the app |
 |---|---|
 | **Social Media Team** | Weekly Instagram posting calendar with daily check-offs |
-| **Photo & Media Team** | Photography / filming tasks on the same calendar |
-| **Editing Team** | YouTube & Spotify tasks (uploads, podcast cuts) |
+| **Photo & Media Team** | Weekly checklist — standing or one-off shoot tasks |
+| **Editing Team** | Weekly checklist — YouTube & Spotify tasks |
+| **Graphics Team** | Weekly checklist — design tasks; also receives Projects |
 
 **Features**
 
-- **Week view** — see everything that needs to happen each day of the week,
-  tick items off as they're done, flip between weeks, or tap the date range
-  to jump straight to any week or month. Posts can be one-off, weekly, or
-  monthly (e.g. "3rd Wednesday"). When editing a recurring post you choose
-  the scope: **just this week**, **this week and all future weeks**, or
-  **every week** — so one-off tweaks never disturb the standing schedule.
+- **Week view** — pick a team from the chips; each shows the format that fits:
+  - **Social** — a daily Mon–Sun calendar. Tick posts off, flip between weeks,
+    or tap the date range to jump to any week. Posts can be one-off, weekly, or
+    monthly (e.g. "3rd Wednesday"); when editing a recurring post you choose the
+    scope (**just this week**, **future weeks**, or **every week**).
+  - **Media**, **Editing** & **Graphics** — a weekly checklist (not daily).
+    Each task is either **standing** (appears every week, ticked off once per
+    week) or **one-off** (just the week you add it to). Editing
+    starts with Edit/Post Spotify and Edit/Post YouTube; Media starts blank for
+    your Sunday shoot list. Add or remove tasks any time.
+  - **Graphics** — a weekly checklist like Media/Editing; bigger pieces can
+    also be tracked as Projects.
+- **Focus** — plan the month ahead. For each upcoming week set a **focus
+  title** (the theme) and add **content ideas** (Reel / Post / Carousel, a
+  description and an optional concept link). Because you plan future weeks,
+  each idea is content to **shoot in advance** — tick **To shoot → Shot** as
+  it's filmed, and a banner flags what still needs shooting for the next
+  couple of weeks. Editable by editors/admins; hidden from request-only users.
 - **Projects pipeline** — capture ideas, assign them to people, set a
   "required by" date, and track progress through Idea → Approved → Filming
   → Editing → Ready → Posted. Assignment notifications fire on devices
@@ -34,7 +47,10 @@ It covers the three branches of the team:
   into the Projects pipeline (then assign it), or decline it.
 - **Quick links** — a 🔗 button by the header opens shared links (Google
   Drive, Canva, folders…) that the whole team can add and edit.
-- **Teams view** — each branch's weekly progress and task list at a glance.
+- **Today** — the home screen the app opens to: today's posts with quick
+  check-off, who's on posting duty this week, an **Assigned to you** list
+  (your projects and this week's tasks, based on the name you set in Settings),
+  projects due soon (or overdue), and a nudge when requests await approval.
 - **Accounts** — separate content plans for Main Church, YA, YTH and HER,
   switchable from the dropdown under the header.
 - Works on any phone or laptop from a link; installable like a real app
@@ -94,6 +110,38 @@ single-week edits, links, requests). The app shows a banner until it's done.
 
 It gets its own icon, opens full-screen, and works offline.
 
+## 4. Restrict who can access (optional, recommended once the team grows)
+
+Out of the box, anyone with the link can view and change everything. To lock
+it down so people must sign in — and so most people can **only send requests**
+— turn on accounts:
+
+1. **Add the accounts foundation** (safe; changes nothing yet). If you set up
+   sync recently it's already included in `supabase/schema.sql`; otherwise run
+   that block once in the SQL Editor.
+2. **Allow password sign-in without emails:** in Supabase go to
+   **Authentication → Providers → Email**, keep it **enabled**, and turn
+   **OFF “Confirm email.”** (This lets people set a password without needing an
+   email service. Note: with confirmation off, “forgot password” won’t email a
+   reset — an admin can reset a password from the Supabase dashboard, or you
+   can connect a free email service later.)
+3. **Lock it down:** run `supabase/auth-cutover.sql` once in the SQL Editor.
+4. **Become admin:** open the app and **create your account** with the owner
+   email (the one set in the schema — `handle_new_user`). That email becomes an
+   **admin** automatically.
+
+**Roles**
+
+| Role | Can do |
+|---|---|
+| **Requester** | Only send requests and see their own. This is what everyone gets by default. |
+| **Editor** | The full app — calendar, projects, approve/decline requests. |
+| **Admin** | Everything an editor can, plus manage people’s roles. |
+
+Promote someone from Requester to Editor/Admin in **Settings ⚙ → People &
+access** (visible to admins only). Everyone signs in **once**; the app keeps
+them signed in afterwards.
+
 ## Using the app
 
 - **Week** tab: tap **+** on any day to add a post or task. Choose *One
@@ -102,7 +150,8 @@ It gets its own icon, opens full-screen, and works offline.
   day; tap the row to edit or delete it.
 - **Projects** tab: **+ New project** to capture an idea. Assign someone,
   set a "required by" date, and use **Move to …** to advance it.
-- **Teams** tab: each branch's weekly progress, plus quick add per team.
+- **Today** tab: the home screen — today's posts, this week's posting duty,
+  projects due soon, and pending requests, all at a glance.
 
 The app ships with the **Main Church standard weekly Instagram schedule**
 (from the team's posting calendar) plus the Special Reels Tracker projects.
