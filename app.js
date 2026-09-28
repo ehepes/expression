@@ -1,6 +1,6 @@
 /* EXPRESSION — media team hub. UI layer. */
 
-const APP_VERSION = "v23"; // shown in Settings so we can confirm a device updated
+const APP_VERSION = "v24"; // shown in Settings so we can confirm a device updated
 
 const ACCOUNTS = {
   main: "Main Church",
@@ -62,6 +62,7 @@ let tab = ["today", "week", "focus", "projects", "requests"].includes(location.h
   ? location.hash.slice(1)
   : "today";
 let focusWeeksShown = 5; // Focus tab horizon: this week + next 4 (extendable)
+let focusWeeksBack = 0; // how many past weeks to also show (via "previous weeks")
 let branchFilter = "social"; // which team is selected on the Week tab
 let weekStart = startOfWeek(new Date());
 let account = ACCOUNTS[getPrefs().account] ? getPrefs().account : "main";
@@ -1410,15 +1411,16 @@ function renderFocus() {
       } still to shoot for the next 2 weeks</div>`
     : "";
   let cards = "";
-  for (let i = 0; i < focusWeeksShown; i++) cards += focusWeekCardHtml(addDays(start, i * 7));
+  for (let i = -focusWeeksBack; i < focusWeeksShown; i++) cards += focusWeekCardHtml(addDays(start, i * 7));
   return `
     <div class="projects-head">
       <h2>Focus</h2>
     </div>
     <p class="focus-intro">Plan the month ahead — set each week's focus and add content that needs shooting <b>before</b> the week it posts.</p>
     ${banner}
+    <button class="ghost-btn focus-more" data-action="focus-back">&#8593; Show previous weeks</button>
     ${cards}
-    <button class="ghost-btn focus-more" data-action="focus-more">Show more weeks</button>`;
+    <button class="ghost-btn focus-more" data-action="focus-more">Show more weeks &#8595;</button>`;
 }
 
 function focusWeekCardHtml(ws) {
@@ -1799,6 +1801,10 @@ document.addEventListener("click", (e) => {
       break;
     case "focus-more":
       focusWeeksShown += 4;
+      render();
+      break;
+    case "focus-back":
+      focusWeeksBack += 4;
       render();
       break;
     case "toggle-focus-week": {
