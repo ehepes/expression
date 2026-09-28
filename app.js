@@ -1,6 +1,6 @@
 /* EXPRESSION — media team hub. UI layer. */
 
-const APP_VERSION = "v22"; // shown in Settings so we can confirm a device updated
+const APP_VERSION = "v23"; // shown in Settings so we can confirm a device updated
 
 const ACCOUNTS = {
   main: "Main Church",
@@ -220,7 +220,7 @@ function renderBanner() {
       "<b>Couldn’t reach the team database.</b> Working from this device for now — check the keys in config.js or your connection, then reload.";
   } else if (Store.needsUpgrade()) {
     el.innerHTML =
-      "<b>Database upgrade needed:</b> to enable team names, week duty, single-week edits, links and requests, run <b>supabase/upgrade.sql</b> in the Supabase SQL Editor (it’s in the project files), then reload.";
+      "<b>One quick database step:</b> to turn on day editors & post links, run <b>supabase/day-plans.sql</b> in the Supabase SQL Editor, then reload.";
   } else {
     el.innerHTML = "";
   }
@@ -288,6 +288,69 @@ function renderWeek() {
   return `${weekNavHtml()}${chipsHtml()}${body}`;
 }
 
+// Per-day plan: who's editing that day's post, plus a concept and a post link.
+function dayPlanFor(dateStr) {
+  return (
+    Store.get().day_plans.find((d) => (d.account || "main") === account && d.date === dateStr) || {}
+  );
+}
+
+function dayPlanHtml(dateStr) {
+  const p = dayPlanFor(dateStr);
+  const link = (url, label, icon) =>
+    url
+      ? `<a class="dp-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${icon} ${label}</a>`
+      : `<span class="dp-link muted">${icon} ${label}</span>`;
+  return `
+    <div class="day-plan" data-action="day-plan" data-date="${dateStr}">
+      <span class="dp-editor">&#9998; ${p.editor ? esc(p.editor) : "<span class='muted'>Assign editor</span>"}</span>
+      <span class="dp-links">
+        ${link(p.concept_url, "Concept", "&#128161;")}
+        ${link(p.post_url, "Post", "&#128228;")}
+      </span>
+    </div>`;
+}
+
+function openDayPlanModal(dateStr) {
+  const p = dayPlanFor(dateStr);
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const label = fmtShort(new Date(y, m - 1, d));
+  document.getElementById("modal-root").innerHTML = `
+    <div class="modal-overlay" data-action="close-modal">
+      <form class="modal" id="day-plan-form">
+        <h2>${label} · post plan</h2>
+        <div class="field">
+          <label>Editing this day's post</label>
+          ${assigneeFieldHtml(p.editor || "")}
+          <p class="hint">They're notified when assigned (needs notifications allowed on their device).</p>
+        </div>
+        <div class="field">
+          <label>Concept link</label>
+          <input type="text" name="concept_url" maxlength="500" value="${esc(p.concept_url || "")}" placeholder="Link to the idea (Canva, reference…)" />
+        </div>
+        <div class="field">
+          <label>Post link</label>
+          <input type="text" name="post_url" maxlength="500" value="${esc(p.post_url || "")}" placeholder="Link to the edited post, once ready" />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="ghost-btn" data-action="close-modal">Cancel</button>
+          <button type="submit" class="primary-btn">Save</button>
+        </div>
+      </form>
+    </div>`;
+  const form = document.getElementById("day-plan-form");
+  wireAssigneeField(form);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    Store.setDayPlan(account, dateStr, {
+      editor: readAssignee(form),
+      concept_url: form.concept_url.value.trim(),
+      post_url: form.post_url.value.trim(),
+    });
+    closeModal();
+  });
+}
+
 // Social: the full daily Mon–Sun calendar with posting duty and progress.
 function renderCalendar() {
   const today = ymd(new Date());
@@ -308,6 +371,7 @@ function renderCalendar() {
           ${isToday ? '<span class="today-tag">TODAY</span>' : ""}
           <button class="day-add" data-action="add-item" data-date="${dateStr}" aria-label="Add to ${DAY_NAMES[i]}">+</button>
         </div>
+        ${dayPlanHtml(dateStr)}
         ${
           items.length
             ? items.map((it) => taskRowHtml(it, dateStr)).join("")
@@ -1324,6 +1388,14 @@ function focusTitleFor(wsStr) {
   return w ? w.title || "" : "";
 }
 
+// Which Focus weeks are expanded (remembered per device). Default: only the
+// current week is open, so the tab is a scannable list you drill into.
+function focusOpen(wsStr) {
+  const o = getPrefs().focusOpen;
+  if (o && typeof o === "object" && wsStr in o) return !!o[wsStr];
+  return wsStr === ymd(startOfWeek(new Date()));
+}
+
 function renderFocus() {
   const start = startOfWeek(new Date());
   const startStr = ymd(start);
@@ -1353,18 +1425,29 @@ function focusWeekCardHtml(ws) {
   const wsStr = ymd(ws);
   const range = `${fmtShort(ws)} – ${fmtShort(addDays(ws, 6))}`;
   const isThisWeek = wsStr === ymd(startOfWeek(new Date()));
+  const isOpen = focusOpen(wsStr);
   const ideas = accountFocusIdeas().filter((r) => r.week_start === wsStr);
+  const toShoot = ideas.filter((r) => !r.shot).length;
+  const title = focusTitleFor(wsStr);
+  const summary =
+    (title ? esc(title) + " — " : "") +
+    `${ideas.length} idea${ideas.length === 1 ? "" : "s"}${toShoot ? ` · ${toShoot} to shoot` : ""}`;
+  const header = `
+    <button type="button" class="focus-head${isOpen ? " open" : ""}" data-action="toggle-focus-week" data-week="${wsStr}" aria-expanded="${isOpen}">
+      <span class="group-caret">&#9656;</span>
+      <span class="focus-head-main">
+        <span class="focus-head-range">${range}${isThisWeek ? ' <span class="focus-now">this week</span>' : ""}</span>
+        <span class="focus-head-summary">${summary}</span>
+      </span>
+    </button>`;
+  if (!isOpen) return `<div class="focus-card collapsed">${header}</div>`;
   const ideaRows = ideas.length
     ? ideas.map(focusIdeaRowHtml).join("")
     : '<div class="focus-empty">Nothing planned yet.</div>';
   return `
     <div class="focus-card">
-      <div class="focus-week-range">${range}${
-        isThisWeek ? ' <span class="focus-now">this week</span>' : ""
-      }</div>
-      <input class="focus-title-input" data-focus-week="${wsStr}" value="${esc(
-    focusTitleFor(wsStr)
-  )}" maxlength="120" placeholder="Focus for this week (e.g. Baptism Sunday)…" />
+      ${header}
+      <input class="focus-title-input" data-focus-week="${wsStr}" value="${esc(title)}" maxlength="120" placeholder="Focus for this week (e.g. Baptism Sunday)…" />
       ${ideaRows}
       <button class="ghost-btn small focus-add" data-action="add-focus" data-week="${wsStr}">+ Add content</button>
     </div>`;
@@ -1629,6 +1712,10 @@ document.addEventListener("click", (e) => {
     case "add-item":
       openItemModal({ date: el.dataset.date, branch: el.dataset.branch });
       break;
+    case "day-plan":
+      if (e.target.closest("a")) break; // let concept/post links open
+      openDayPlanModal(el.dataset.date);
+      break;
     case "edit-item":
       if (e.target.closest('[data-action="toggle-done"]')) break;
       if (e.target.closest('.task-asset')) break;
@@ -1714,6 +1801,14 @@ document.addEventListener("click", (e) => {
       focusWeeksShown += 4;
       render();
       break;
+    case "toggle-focus-week": {
+      const w = el.dataset.week;
+      const o = Object.assign({}, getPrefs().focusOpen || {});
+      o[w] = !focusOpen(w);
+      setPrefs({ focusOpen: o });
+      render();
+      break;
+    }
     case "delete-focus":
       if (confirm("Delete this content idea?")) {
         Store.deleteFocusIdea(el.dataset.id);

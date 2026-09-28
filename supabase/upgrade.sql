@@ -78,6 +78,19 @@ create table if not exists focus_ideas (
   created_at timestamptz not null default now()
 );
 
+-- Per-day post plan (editor + concept/post links). If the app is locked down,
+-- run supabase/day-plans.sql instead so this table is staff-only.
+create table if not exists day_plans (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  date date not null,
+  editor text not null default '',
+  concept_url text not null default '',
+  post_url text not null default '',
+  created_at timestamptz not null default now(),
+  unique (account, date)
+);
+
 alter table members enable row level security;
 alter table week_assignments enable row level security;
 alter table item_exceptions enable row level security;

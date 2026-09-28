@@ -166,6 +166,21 @@ create policy "team access" on focus_ideas for all using (true) with check (true
 alter publication supabase_realtime add table focus_weeks;
 alter publication supabase_realtime add table focus_ideas;
 
+-- Per-day post plan: who's editing that day's post + concept/post links.
+create table if not exists day_plans (
+  id uuid primary key default gen_random_uuid(),
+  account text not null default 'main',
+  date date not null,
+  editor text not null default '',
+  concept_url text not null default '',
+  post_url text not null default '',
+  created_at timestamptz not null default now(),
+  unique (account, date)
+);
+alter table day_plans enable row level security;
+create policy "team access" on day_plans for all using (true) with check (true);
+alter publication supabase_realtime add table day_plans;
+
 -- ---------------------------------------------------------------
 -- Accounts & roles foundation.
 --

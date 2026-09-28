@@ -37,6 +37,7 @@ window.Store = (() => {
     requests: [],
     focus_weeks: [],
     focus_ideas: [],
+    day_plans: [],
   };
 
   let mode = "local"; // "local" | "remote" | "local-error"
@@ -171,6 +172,7 @@ window.Store = (() => {
       requests,
       focusWeeks,
       focusIdeas,
+      dayPlans,
     ] = await Promise.all([
       sb.from("items").select("*").order("created_at"),
       sb.from("completions").select("*"),
@@ -182,6 +184,7 @@ window.Store = (() => {
       sb.from("requests").select("*").order("created_at"),
       sb.from("focus_weeks").select("*"),
       sb.from("focus_ideas").select("*").order("created_at"),
+      sb.from("day_plans").select("*"),
     ]);
     // Never throw: a per-table error can mean "not allowed" (a requester
     // has no access to staff tables) or a transient network blip. In both
@@ -195,7 +198,8 @@ window.Store = (() => {
         exceptions.error ||
         links.error ||
         focusWeeks.error ||
-        focusIdeas.error
+        focusIdeas.error ||
+        dayPlans.error
       );
     const keep = (res, prev) => (res.error ? prev : res.data || []);
     state = {
@@ -209,6 +213,7 @@ window.Store = (() => {
       requests: keep(requests, state.requests),
       focus_weeks: keep(focusWeeks, state.focus_weeks),
       focus_ideas: keep(focusIdeas, state.focus_ideas),
+      day_plans: keep(dayPlans, state.day_plans),
     };
   }
 
@@ -657,6 +662,45 @@ window.Store = (() => {
     emit();
   }
 
+  // ----- day plans (per-day editor + concept/post links on the calendar) -----
+  function dayPlanRow(r) {
+    const url = (u) => {
+      u = (u || "").trim();
+      return u && !/^https?:\/\//i.test(u) ? "https://" + u : u;
+    };
+    return {
+      account: r.account || "main",
+      date: r.date,
+      editor: (r.editor || "").trim(),
+      concept_url: url(r.concept_url),
+      post_url: url(r.post_url),
+    };
+  }
+
+  async function setDayPlan(acct, dateStr, fields) {
+    const row = dayPlanRow(Object.assign({ account: acct, date: dateStr }, fields));
+    const prev = state.day_plans.find(
+      (d) => (d.account || "main") === acct && d.date === dateStr
+    );
+    const editorChanged =
+      row.editor && row.editor.toLowerCase() !== ((prev && prev.editor) || "").toLowerCase();
+    if (sb) {
+      const { error } = await sb
+        .from("day_plans")
+        .upsert(row, { onConflict: "account,date" });
+      if (error) return remoteFail(error);
+      if (row.editor) addMember(row.editor);
+      if (editorChanged) {
+        notifyAssignee(row.editor, "You're editing a post", "Post for " + dateStr);
+      }
+      return afterRemoteWrite();
+    }
+    if (prev) Object.assign(prev, row);
+    else state.day_plans.push(Object.assign({ id: uid() }, row));
+    saveLocal();
+    emit();
+  }
+
   // ----- focus (weekly theme + content ideas to shoot ahead) -----
   async function setFocusTitle(acct, weekStartStr, title) {
     title = (title || "").trim();
@@ -858,6 +902,7 @@ window.Store = (() => {
     addRequest,
     updateRequest,
     deleteRequest,
+    setDayPlan,
     setFocusTitle,
     addFocusIdea,
     updateFocusIdea,

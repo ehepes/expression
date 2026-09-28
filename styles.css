@@ -1205,3 +1205,43 @@ body[data-access="request-only"] #banner {
 
 .people-toolbar { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:8px 12px; border-bottom:1px solid var(--line); font-size:12px; color:var(--muted); font-weight:700; }
 .people-toolbar .ghost-btn.small { padding:5px 10px; font-size:12px; }
+
+/* ----- per-day post plan (editor + concept/post links) ----- */
+.day-plan {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+  background: #F6F9FF;
+  cursor: pointer;
+  font-size: 13px;
+}
+.day-plan .muted { color: #A9B6CE; }
+.dp-editor { font-weight: 600; color: var(--text); }
+.dp-links { display: flex; gap: 12px; margin-left: auto; }
+.dp-link { color: var(--blue); text-decoration: none; font-weight: 600; white-space: nowrap; }
+.dp-link.muted { color: #A9B6CE; font-weight: 500; }
+a.dp-link:active { opacity: 0.6; }
+
+/* ----- Focus collapsible week headers ----- */
+.focus-card.collapsed { padding: 0; }
+.focus-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  background: transparent;
+  border: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text);
+}
+.focus-head .group-caret { color: var(--muted); font-size: 12px; transition: transform 0.15s ease; flex: 0 0 auto; }
+.focus-head.open .group-caret { transform: rotate(90deg); }
+.focus-head-main { display: flex; flex-direction: column; min-width: 0; gap: 2px; }
+.focus-head-range { font-size: 12.5px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.02em; }
+.focus-head-summary { font-size: 14px; color: var(--text); overflow: hidden; text-overflow: ellipsis; }
